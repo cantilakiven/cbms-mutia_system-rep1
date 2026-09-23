@@ -22,10 +22,10 @@ tag = v1.2.7
 
 ```powershell
 git add .
-git commit -m "Release v1.4.14"
+git commit -m "Release v1.4.15"
 git push origin main
-git tag v1.4.14
-git push origin v1.4.14
+git tag v1.4.15
+git push origin v1.4.15
 ```
 
 ## Expected GitHub assets
