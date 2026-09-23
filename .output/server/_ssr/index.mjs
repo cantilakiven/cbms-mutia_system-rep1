@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 let lastCapturedError;
 const TTL_MS = 5e3;
 function record(error) {
@@ -54,54 +53,16 @@ function renderErrorPage() {
 let serverEntryPromise;
 async function getServerEntry() {
   if (!serverEntryPromise) {
-    serverEntryPromise = import("./server-3q-1j674.mjs").then((n) => n.server).then(
+    serverEntryPromise = import("./server-gVFyEmQy.mjs").then((n) => n.server).then(
       (m) => m.default ?? m
     );
   }
   return serverEntryPromise;
 }
-const SESSION_TOKEN = String(process.env.CBMS_SESSION_TOKEN || "");
-function isAuthorizedLocalRequest(request) {
-  if (!SESSION_TOKEN) return false;
-  const supplied = request.headers.get("x-cbms-session") || "";
-  const expected = Buffer.from(SESSION_TOKEN, "utf8");
-  const actual = Buffer.from(supplied, "utf8");
-  return expected.length === actual.length && timingSafeEqual(expected, actual);
-}
-function unauthorizedResponse() {
-  return new Response("Forbidden", {
-    status: 403,
-    headers: {
-      "content-type": "text/plain; charset=utf-8",
-      "cache-control": "no-store, max-age=0",
-      "pragma": "no-cache",
-      "x-content-type-options": "nosniff",
-      "referrer-policy": "no-referrer"
-    }
-  });
-}
-function applySecurityHeaders(response) {
-  const headers = new Headers(response.headers);
-  headers.set("cache-control", "no-store, max-age=0");
-  headers.set("pragma", "no-cache");
-  headers.set("x-content-type-options", "nosniff");
-  headers.set("referrer-policy", "no-referrer");
-  headers.set("x-frame-options", "DENY");
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers
-  });
-}
 function brandedErrorResponse() {
   return new Response(renderErrorPage(), {
     status: 500,
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "cache-control": "no-store, max-age=0",
-      "x-content-type-options": "nosniff",
-      "referrer-policy": "no-referrer"
-    }
+    headers: { "content-type": "text/html; charset=utf-8" }
   });
 }
 function isCatastrophicSsrErrorBody(body, responseStatus) {
@@ -134,12 +95,10 @@ async function normalizeCatastrophicSsrResponse(response) {
 }
 const server = {
   async fetch(request, env, ctx) {
-    if (!isAuthorizedLocalRequest(request)) return unauthorizedResponse();
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
-      const normalized = await normalizeCatastrophicSsrResponse(response);
-      return applySecurityHeaders(normalized);
+      return await normalizeCatastrophicSsrResponse(response);
     } catch (error) {
       console.error(error);
       return brandedErrorResponse();
