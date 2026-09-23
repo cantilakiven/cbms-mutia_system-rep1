@@ -1,1 +1,0 @@
-function i(t){return[t.a01_first_name,t.a01_middle_name,t.a01_last_name,t.a01_suffix].filter(Boolean).join(" ").trim()||"—"}function r(t){return t==null||t===""?"—":String(t)}const a="Source: 2024 Community-Based Monitoring System, Philippine Statistics Authority";export{a as S,r as a,i as f};
