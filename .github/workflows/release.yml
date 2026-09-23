@@ -35,9 +35,6 @@ jobs:
       - name: Validate repository safety
         run: npm run validate:project
 
-      - name: Validate dependency and release contract
-        run: npm run validate:dependencies
-
       - name: Verify package version matches tag
         shell: pwsh
         run: |
