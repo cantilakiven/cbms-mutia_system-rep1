@@ -19,10 +19,6 @@ contextBridge.exposeInMainWorld("electronStore", {
   saveExportFile: (filename, data) => ipcRenderer.invoke("save-export-file", { filename, data }),
 });
 
-contextBridge.exposeInMainWorld("electronDebug", {
-  readFile: (path) => ipcRenderer.invoke("debug-read-file", path),
-});
-
 
 contextBridge.exposeInMainWorld("electronPrint", {
   getPrinters: () => ipcRenderer.invoke("get-printers"),

@@ -917,9 +917,24 @@ export function buildBook({ year, barangay = "", sections, includeNameLists = fa
         ? result.rows
         : [...result.rows, { category: "TOTAL", count: result.total, percent: "100.00%" }];
       const title = `Table ${r.tableNumber} — ${r.title} - CBMS ${year}`;
-      return [table(`rp-${r.id}`, title, baseColumns, rows, `${note} ${result.note ?? r.note ?? ""}`.trim())];
+      const output = [table(`rp-${r.id}`, title, baseColumns, rows, `${note} ${result.note ?? r.note ?? ""}`.trim())];
+      if (result.byBarangayRows?.length) {
+        output.push(table(
+          `rp-${r.id}-by-barangay`,
+          `${title} — Summary by Barangay`,
+          [
+            { key: "barangay", label: "Barangay" },
+            { key: "category", label: r.kind === "summary" ? "Indicator" : "Category" },
+            { key: "count", label: r.kind === "summary" ? "Value" : r.source === "households" ? "Households" : "Persons" },
+            { key: "percent", label: "Percentage / Rate" },
+          ],
+          result.byBarangayRows,
+          `Barangay-level results are recalculated using each barangay's own applicable denominator. ${result.note ?? r.note ?? ""}`.trim(),
+        ));
+      }
+      return output;
     });
-    if (tables.length) out.push({ id: "reports", title: "Statistical Reports", intro: `CBMS ${year} Statistical Reports. Tables are numbered to match the report catalog and use the same definitions as the Reports tab. Empty zero-base tables are omitted from the generated book.`, tables });
+    if (tables.length) out.push({ id: "reports", title: "Statistical Reports", intro: `CBMS ${year} Statistical Reports. Tables are numbered to match the report catalog and use the same definitions as the Reports tab. Where the source data supports it, each overall table is followed by a clean Summary by Barangay table using barangay-specific denominators. Empty zero-base tables are omitted from the generated book.`, tables });
   }
 
   const filteredSections = out.filter((section) => section.tables.length > 0);

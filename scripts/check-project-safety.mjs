@@ -35,6 +35,23 @@ if (eulaCandidates.length !== 1 || eulaCandidates[0] !== path.join(root, 'docs',
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 if (packageJson.build?.nsis?.license !== 'docs/EULA.txt') failures.push('package.json must reference docs/EULA.txt as the only NSIS license.');
 
+const mainSource = fs.readFileSync(path.join(root, 'main.cjs'), 'utf8');
+const preloadSource = fs.readFileSync(path.join(root, 'preload.cjs'), 'utf8');
+
+const exportLogSource = fs.readFileSync(path.join(root, 'src', 'lib', 'export-log.ts'), 'utf8');
+if (!exportLogSource.includes('redactForLocalStorage') || !exportLogSource.includes('Never duplicate export passwords')) failures.push('Export passwords must not be persisted into renderer localStorage.');
+if (/debug-read-file|electronDebug/.test(mainSource + '\n' + preloadSource)) failures.push('Arbitrary renderer-exposed file-read IPC must not exist.');
+if (!mainSource.includes('sandbox: true') || !mainSource.includes('contextIsolation: true') || !mainSource.includes('nodeIntegration: false')) failures.push('Electron renderer hardening flags are incomplete.');
+if (!mainSource.includes('setPermissionRequestHandler') || !mainSource.includes('setPermissionCheckHandler')) failures.push('Electron permission handlers are missing.');
+if (!mainSource.includes('will-navigate') || !mainSource.includes('setWindowOpenHandler')) failures.push('Navigation/window-open restrictions are missing.');
+if (!mainSource.includes('Unauthorized IPC sender')) failures.push('IPC sender validation is missing.');
+if (!mainSource.includes('cbms_session') || !mainSource.includes('APP_CSP') || !mainSource.includes('frame-ancestors')) failures.push('Protected local-origin proxy/CSP hardening is incomplete.');
+if (!mainSource.includes('will-attach-webview')) failures.push('WebView creation must be explicitly denied.');
+if (!mainSource.includes('encryptExportLog') || !mainSource.includes('aes-256-gcm')) failures.push('Desktop Export Log must be encrypted at rest with AES-256-GCM.');
+if (!mainSource.includes('getOrCreateExportLogKey') || !mainSource.includes('safeStorage.encryptString')) failures.push('Export-log key must be protected with Electron safeStorage when available.');
+if (packageJson.dependencies?.['serve-handler']) failures.push('Unused serve-handler dependency must not be shipped.');
+if (packageJson.build?.electronFuses?.enableCookieEncryption !== true || packageJson.build?.electronFuses?.enableEmbeddedAsarIntegrityValidation !== true || packageJson.build?.electronFuses?.onlyLoadAppFromAsar !== true) failures.push('Production Electron fuses are incomplete.');
+
 let tracked = [];
 try { tracked = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split(/\r?\n/).filter(Boolean); } catch {}
 for (const rel of tracked) {

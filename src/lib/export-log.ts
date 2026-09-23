@@ -11,7 +11,7 @@ export interface ExportLogEntry {
   encryption?: "AES-256" | "AES-256-GCM";
   title: string;
   rowCount: number;
-  password: string;
+  password?: string;
   bytes: number;
   user?: string;
 }
@@ -39,6 +39,13 @@ void isLoaded;
 
 function isClient(): boolean {
   return typeof window !== "undefined";
+}
+
+function redactForLocalStorage(entries: ExportLogEntry[]): ExportLogEntry[] {
+  return entries.map((entry) => {
+    const { password: _password, ...safeEntry } = entry;
+    return safeEntry as ExportLogEntry;
+  });
 }
 
 function notify() {
@@ -118,7 +125,7 @@ async function initStore() {
     console.error('export-log: saveToDisk failed during init merge:', err);
   }
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(cachedLog));
+    localStorage.setItem(LS_KEY, JSON.stringify(redactForLocalStorage(cachedLog)));
   } catch {}
 
   isLoaded = true;
@@ -169,9 +176,11 @@ async function saveToDisk(entries: ExportLogEntry[], replace = false) {
   // Always keep a localStorage backup so restarts remain resilient even if
   // the Electron disk write/read has issues on some environments.
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(entries));
+    // Never duplicate export passwords into renderer-managed localStorage. In the
+    // desktop app the authoritative copy is encrypted by Electron before it hits disk.
+    localStorage.setItem(LS_KEY, JSON.stringify(redactForLocalStorage(entries)));
   } catch (err) {
-    console.error("Failed to persist export log to localStorage:", err);
+    console.error("Failed to persist export log backup to localStorage:", err);
   }
 }
 

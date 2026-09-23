@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, shell, ipcMain, dialog, session } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const { fork } = require("child_process");
 const path = require("path");
@@ -8,6 +8,75 @@ const fs = require("fs");
 const crypto = require("crypto");
 
 let serverProcess = null;
+let proxyServer = null;
+let proxyToken = null;
+let appOrigin = "";
+let updaterInterval = null;
+let mainWindow = null;
+
+const ALLOWED_SETTINGS = new Set(["localdata.installed-at", "localdata.monthly-checkin.ack"]);
+const MAX_EXPORT_BYTES = 100 * 1024 * 1024;
+const MAX_PRINT_HTML_BYTES = 25 * 1024 * 1024;
+const MAX_LOG_ENTRIES = 5000;
+const MAX_LOG_BYTES = 10 * 1024 * 1024;
+const ALLOWED_EXTERNAL_URLS = new Set(["https://www.facebook.com/hello.kwekwe"]);
+const APP_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-src 'self' data: blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+function isTrustedRenderer(event) {
+  try {
+    if (!appOrigin || !event?.sender) return false;
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (!owner || owner.isDestroyed() || !mainWindow || owner !== mainWindow) return false;
+    const senderFrame = event.senderFrame;
+    const senderOrigin = senderFrame?.origin || new URL(senderFrame?.url || event.sender.getURL()).origin;
+    return senderOrigin === appOrigin;
+  } catch {
+    return false;
+  }
+}
+
+function secureIpcHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (!isTrustedRenderer(event)) throw new Error(`Unauthorized IPC sender for ${channel}.`);
+    return handler(event, ...args);
+  });
+}
+
+function isAllowedExternalUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && ALLOWED_EXTERNAL_URLS.has(parsed.href);
+  } catch {
+    return false;
+  }
+}
+
+function parseCookieHeader(value) {
+  return String(value || "").split(";").reduce((out, part) => {
+    const [key, ...rest] = part.trim().split("=");
+    if (key) out[key] = rest.join("=");
+    return out;
+  }, {});
+}
+
+function safeTokenEquals(received, expected) {
+  if (!received || !expected) return false;
+  const a = Buffer.from(String(received));
+  const b = Buffer.from(String(expected));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 // ── Persistent Storage (AppData/Roaming/CBMS Insights) ────
 // Fixed app name so the data folder is always the same across versions/builds.
@@ -243,6 +312,146 @@ function saveAuthRecord(record) {
   saveSettings(settings);
 }
 
+
+const EXPORT_LOG_BLOB_VERSION = 1;
+
+function getExportLogKeyFilePath() {
+  return path.join(getSaveFolder(), "export-log.key");
+}
+
+function getOrCreateExportLogKey() {
+  const settings = getSettings();
+  const candidates = [];
+
+  if (isSafeStorageAvailable() && typeof settings.exportLogKey === "string" && settings.exportLogKey) {
+    try {
+      const { safeStorage } = require("electron");
+      const plain = safeStorage.decryptString(Buffer.from(settings.exportLogKey, "base64"));
+      const key = Buffer.from(plain, "base64");
+      if (key.length === 32) candidates.push(key);
+    } catch {
+      // Fall through to the legacy/fallback key file.
+    }
+  }
+
+  const keyPath = getExportLogKeyFilePath();
+  if (fs.existsSync(keyPath)) {
+    try {
+      const key = Buffer.from(fs.readFileSync(keyPath, "utf8").trim(), "base64");
+      if (key.length === 32) candidates.push(key);
+    } catch {
+      // Ignore a corrupt fallback key and generate a new one only when creation is allowed.
+    }
+  }
+
+  if (candidates.length) {
+    const key = candidates[0];
+    // Migrate a development/fallback key into OS-protected storage whenever possible.
+    if (isSafeStorageAvailable()) {
+      try {
+        const { safeStorage } = require("electron");
+        settings.exportLogKey = safeStorage.encryptString(key.toString("base64")).toString("base64");
+        saveSettings(settings);
+        try { fs.unlinkSync(keyPath); } catch {}
+      } catch (err) {
+        console.warn("Failed to migrate export-log key into OS protected storage.", err);
+      }
+    }
+    return key;
+  }
+
+  const key = crypto.randomBytes(32);
+  if (isSafeStorageAvailable()) {
+    try {
+      const { safeStorage } = require("electron");
+      settings.exportLogKey = safeStorage.encryptString(key.toString("base64")).toString("base64");
+      saveSettings(settings);
+      return key;
+    } catch (err) {
+      console.warn("Failed to OS-protect export-log key; using restricted fallback file.", err);
+    }
+  }
+
+  try {
+    fs.writeFileSync(keyPath, key.toString("base64"), { encoding: "utf8", mode: 0o600 });
+  } catch (err) {
+    throw new Error(`Failed to persist export-log encryption key: ${err?.message || err}`);
+  }
+  return key;
+}
+
+function encryptExportLog(entries) {
+  const key = getOrCreateExportLogKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(entries), "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return {
+    v: EXPORT_LOG_BLOB_VERSION,
+    iv: iv.toString("base64"),
+    tag: tag.toString("base64"),
+    data: ciphertext.toString("base64"),
+  };
+}
+
+function decryptExportLogBlob(blob) {
+  if (!blob || typeof blob !== "object" || blob.v !== EXPORT_LOG_BLOB_VERSION) return null;
+  try {
+    const iv = Buffer.from(blob.iv, "base64");
+    const tag = Buffer.from(blob.tag, "base64");
+    const ciphertext = Buffer.from(blob.data, "base64");
+    if (iv.length !== 12 || tag.length !== 16 || !ciphertext.length) return null;
+    const keyPath = getExportLogKeyFilePath();
+    const settings = getSettings();
+    const candidates = [];
+
+    if (isSafeStorageAvailable() && typeof settings.exportLogKey === "string" && settings.exportLogKey) {
+      try {
+        const { safeStorage } = require("electron");
+        const key = Buffer.from(safeStorage.decryptString(Buffer.from(settings.exportLogKey, "base64")), "base64");
+        if (key.length === 32) candidates.push(key);
+      } catch {}
+    }
+    if (fs.existsSync(keyPath)) {
+      try {
+        const key = Buffer.from(fs.readFileSync(keyPath, "utf8").trim(), "base64");
+        if (key.length === 32) candidates.push(key);
+      } catch {}
+    }
+
+    for (const key of candidates) {
+      try {
+        const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+        decipher.setAuthTag(tag);
+        const plain = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+        const parsed = JSON.parse(plain);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {
+        // Try another recoverable key.
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function readExportLog() {
+  const raw = readJsonFile(getLogFilePath(), null);
+  if (Array.isArray(raw)) {
+    // Legacy v1.4.13 log: read once and transparently migrate it to AES-256-GCM.
+    const legacy = raw.filter(Boolean).slice(0, MAX_LOG_ENTRIES);
+    try { writeJsonFileAtomic(getLogFilePath(), encryptExportLog(legacy)); } catch (err) {
+      console.warn("Failed to migrate legacy export log to encrypted storage.", err);
+    }
+    return legacy;
+  }
+  const decrypted = decryptExportLogBlob(raw);
+  return Array.isArray(decrypted) ? decrypted : [];
+}
+
+function writeExportLog(entries) {
+  writeJsonFileAtomic(getLogFilePath(), encryptExportLog(entries));
+}
+
 function hashPin(pin, saltHex) {
   return crypto.scryptSync(String(pin), Buffer.from(saltHex, "hex"), AUTH_SCRYPT.keylen, {
     N: AUTH_SCRYPT.N,
@@ -261,28 +470,27 @@ function verifyPin(pin, auth) {
   } catch { return false; }
 }
 
-ipcMain.handle("get-export-log", () => {
-  const entries = readJsonFile(getLogFilePath(), []);
-  return Array.isArray(entries) ? entries : [];
-});
+secureIpcHandle("get-export-log", () => readExportLog());
 
-ipcMain.handle("save-export-log", (_, entries, replace) => {
+secureIpcHandle("save-export-log", (_, entries, replace) => {
   try {
-    const list = Array.isArray(entries) ? entries : [];
+    const list = Array.isArray(entries) ? entries.slice(0, MAX_LOG_ENTRIES) : [];
+    const serialized = JSON.stringify(list);
+    if (Buffer.byteLength(serialized, "utf8") > MAX_LOG_BYTES) throw new Error("Export log is too large.");
     if (replace) {
-      writeJsonFileAtomic(getLogFilePath(), list);
+      writeExportLog(list);
       return true;
     }
     // Merge with whatever is already on disk so no logged export is ever lost.
-    const existing = readJsonFile(getLogFilePath(), []);
+    const existing = readExportLog();
     const byId = new Map();
-    for (const e of [...(Array.isArray(existing) ? existing : []), ...list]) {
+    for (const e of [...existing, ...list]) {
       if (e && e.id) byId.set(e.id, e);
     }
     const merged = Array.from(byId.values())
       .sort((a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || "")))
-      .slice(0, 5000);
-    writeJsonFileAtomic(getLogFilePath(), merged);
+      .slice(0, MAX_LOG_ENTRIES);
+    writeExportLog(merged);
     return true;
   } catch (err) {
     console.error("Failed to save log:", err);
@@ -290,9 +498,9 @@ ipcMain.handle("save-export-log", (_, entries, replace) => {
   }
 });
 
-ipcMain.handle("delete-export-log", () => {
+secureIpcHandle("delete-export-log", () => {
   try {
-    writeJsonFileAtomic(getLogFilePath(), []);
+    writeExportLog([]);
     return true;
   } catch (err) {
     console.error("Failed to clear log:", err);
@@ -300,12 +508,14 @@ ipcMain.handle("delete-export-log", () => {
   }
 });
 
-ipcMain.handle("get-setting", (_, key) => {
+secureIpcHandle("get-setting", (_, key) => {
+  const settingKey = String(key || "");
+  if (!ALLOWED_SETTINGS.has(settingKey)) throw new Error("Requested setting is not readable.");
   const settings = readJsonFile(getSettingsFilePath(), {});
-  return settings && typeof settings === "object" ? settings[key] ?? null : null;
+  return settings && typeof settings === "object" ? settings[settingKey] ?? null : null;
 });
 
-ipcMain.handle("get-auth-state", () => {
+secureIpcHandle("get-auth-state", () => {
   const settings = getSettings();
   const auth = getAuthRecord();
   const now = Date.now();
@@ -330,7 +540,7 @@ ipcMain.handle("get-auth-state", () => {
   };
 });
 
-ipcMain.handle("set-login-pin", (_, pin, currentPin) => {
+secureIpcHandle("set-login-pin", (_, pin, currentPin) => {
   const nextPin = String(pin || "");
   const settings = getSettings();
   const existing = getAuthRecord();
@@ -358,7 +568,7 @@ ipcMain.handle("set-login-pin", (_, pin, currentPin) => {
   return { ok: true };
 });
 
-ipcMain.handle("verify-login-pin", (_, pin) => {
+secureIpcHandle("verify-login-pin", (_, pin) => {
   const settings = getSettings();
   const auth = getAuthRecord();
   if (settings.authBlob && !auth) {
@@ -419,10 +629,19 @@ ipcMain.handle("verify-login-pin", (_, pin) => {
   };
 });
 
-ipcMain.handle("save-setting", (_, key, value) => {
+secureIpcHandle("save-setting", (_, key, value) => {
   try {
+    const settingKey = String(key || "");
+    if (!ALLOWED_SETTINGS.has(settingKey)) throw new Error("Requested setting is not writable.");
+    if (settingKey === "localdata.installed-at" && !(Number.isFinite(Number(value)) && Number(value) >= 0)) {
+      throw new Error("Invalid installed-at setting.");
+    }
+    if (settingKey === "localdata.monthly-checkin.ack" && value !== null && typeof value !== "string") {
+      throw new Error("Invalid check-in setting.");
+    }
+    const normalized = settingKey === "localdata.monthly-checkin.ack" ? String(value || "").slice(0, 64) : Number(value);
     const settings = readJsonFile(getSettingsFilePath(), {}) || {};
-    settings[key] = value;
+    settings[settingKey] = normalized;
     writeJsonFileAtomic(getSettingsFilePath(), settings);
     return true;
   } catch (err) {
@@ -431,14 +650,17 @@ ipcMain.handle("save-setting", (_, key, value) => {
   }
 });
 
-ipcMain.handle("get-user-data-path", () => app.getPath("userData"));
-ipcMain.handle("get-export-log-path", () => getLogFilePath());
-ipcMain.handle("get-download-path", (_, filename) => path.join(app.getPath("downloads"), path.basename(String(filename || "export"))));
-ipcMain.handle("save-export-file", async (event, payload) => {
+secureIpcHandle("get-user-data-path", () => app.getPath("userData"));
+secureIpcHandle("get-export-log-path", () => getLogFilePath());
+secureIpcHandle("get-download-path", (_, filename) => path.join(app.getPath("downloads"), path.basename(String(filename || "export")).slice(0, 240)));
+secureIpcHandle("save-export-file", async (event, payload) => {
   try {
-    const filename = path.basename(String(payload?.filename || "export"));
+    const filename = path.basename(String(payload?.filename || "export")).slice(0, 240);
     const data = payload?.data;
     if (!data) return { canceled: true };
+    const buffer = Buffer.from(data instanceof ArrayBuffer ? new Uint8Array(data) : data);
+    if (buffer.byteLength === 0) return { canceled: true };
+    if (buffer.byteLength > MAX_EXPORT_BYTES) return { canceled: false, error: "The export is too large to save safely (100 MB limit)." };
     const parent = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showSaveDialog(parent || undefined, {
       title: "Save exported file",
@@ -447,7 +669,6 @@ ipcMain.handle("save-export-file", async (event, payload) => {
       properties: ["createDirectory", "showOverwriteConfirmation"],
     });
     if (result.canceled || !result.filePath) return { canceled: true };
-    const buffer = Buffer.from(data instanceof ArrayBuffer ? new Uint8Array(data) : data);
     fs.writeFileSync(result.filePath, buffer);
     return { canceled: false, filePath: result.filePath };
   } catch (err) {
@@ -455,7 +676,7 @@ ipcMain.handle("save-export-file", async (event, payload) => {
     return { canceled: false, error: err instanceof Error ? err.message : "Unable to save file." };
   }
 });
-ipcMain.handle("get-printers", async (event) => {
+secureIpcHandle("get-printers", async (event) => {
   try {
     const printers = await event.sender.getPrintersAsync();
     return printers.map((printer) => ({
@@ -471,7 +692,7 @@ ipcMain.handle("get-printers", async (event) => {
   }
 });
 
-ipcMain.handle("print-html", async (event, payload) => {
+secureIpcHandle("print-html", async (event, payload) => {
   const rawHtml = payload && typeof payload.html === "string" ? payload.html : "";
   const printerName = payload && typeof payload.printerName === "string" ? payload.printerName : "";
   const options = payload && payload.options && typeof payload.options === "object" ? payload.options : {};
@@ -501,6 +722,8 @@ ipcMain.handle("print-html", async (event, payload) => {
   const orientedHeightMm = pageSize.height / 1000;
   const html = rawHtml.replace(/<\/head>/i, `<style data-cbms-electron-print>@page{size:${orientedWidthMm}mm ${orientedHeightMm}mm;margin:0}.print-page{width:${orientedWidthMm}mm!important;min-width:${orientedWidthMm}mm!important;height:${orientedHeightMm}mm!important;min-height:${orientedHeightMm}mm!important}</style></head>`);
   if (!html) return { ok: false, error: "No printable report content was supplied." };
+  if (Buffer.byteLength(rawHtml, "utf8") > MAX_PRINT_HTML_BYTES) return { ok: false, error: "The printable report is too large (25 MB limit)." };
+  if (printerName.length > 512) return { ok: false, error: "Invalid printer name." };
 
   const parent = BrowserWindow.fromWebContents(event.sender);
   const printWindow = new BrowserWindow({
@@ -509,8 +732,10 @@ ipcMain.handle("print-html", async (event, payload) => {
     height: 1200,
     parent: parent || undefined,
     modal: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, allowRunningInsecureContent: false },
   });
+  printWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  printWindow.webContents.on("will-navigate", (navigationEvent) => navigationEvent.preventDefault());
 
   try {
     await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
@@ -538,15 +763,6 @@ ipcMain.handle("print-html", async (event, payload) => {
   }
 });
 
-ipcMain.handle("debug-read-file", (_, filePath) => {
-  try {
-    if (!filePath || !fs.existsSync(filePath)) return null;
-    return fs.readFileSync(filePath, "utf-8");
-  } catch (err) {
-    console.error("debug-read-file failed:", err);
-    return null;
-  }
-});
 // ────────────────────────────────────────────────────────
 
 
@@ -562,35 +778,150 @@ function tryPort(port) {
   });
 }
 
-// Prefer a fixed port so the app origin (and its localStorage) stays stable between launches.
-async function getFreePort() {
-  const preferred = await tryPort(43117);
-  if (preferred) return preferred;
+async function getFreePort(preferred = 0) {
+  if (preferred) {
+    const preferredPort = await tryPort(preferred);
+    if (preferredPort) return preferredPort;
+  }
   const any = await tryPort(0);
   if (any) return any;
-  throw new Error("No free port available");
+  throw new Error("No free local port available");
 }
-
-
 
 function waitForServer(url, timeoutMs = 30000) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve();
+    };
+
     const attempt = () => {
-      const req = http.get(url, () => {
+      if (Date.now() - start > timeoutMs) {
+        finish(new Error(`Server did not start in time: ${url}`));
+        return;
+      }
+
+      const req = http.get(url, { headers: { Accept: "text/html,application/json,*/*" } }, (res) => {
+        res.resume();
+        // Vite may briefly answer with a non-2xx response while optimizing dependencies.
+        // Any HTTP response proves that the server is listening and reachable.
         req.destroy();
-        resolve();
+        finish();
+      });
+
+      req.setTimeout(1500, () => {
+        req.destroy(new Error("startup probe timeout"));
       });
       req.on("error", () => {
-        if (Date.now() - start > timeoutMs) reject(new Error("Server did not start in time"));
-        else setTimeout(attempt, 300);
+        if (Date.now() - start > timeoutMs) {
+          finish(new Error(`Server did not start in time: ${url}`));
+        } else {
+          setTimeout(attempt, 250);
+        }
       });
     };
+
     attempt();
   });
 }
 
+function securityHeaders(headers) {
+  const next = { ...headers };
+  delete next["content-security-policy"];
+  next["content-security-policy"] = APP_CSP;
+  next["x-content-type-options"] = "nosniff";
+  next["referrer-policy"] = "no-referrer";
+  next["cross-origin-opener-policy"] = "same-origin";
+  next["cross-origin-resource-policy"] = "same-origin";
+  next["permissions-policy"] = "camera=(), microphone=(), geolocation=(), notifications=(), usb=(), serial=()";
+  return next;
+}
+
+async function createProtectedProxy(internalPort) {
+  const proxyPort = await getFreePort(43117);
+  proxyToken = crypto.randomBytes(32).toString("base64url");
+  proxyServer = http.createServer((req, res) => {
+    const cookies = parseCookieHeader(req.headers.cookie);
+    if (!safeTokenEquals(cookies.cbms_session, proxyToken)) {
+      res.writeHead(401, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+      res.end("Unauthorized");
+      return;
+    }
+
+    const upstreamHeaders = { ...req.headers };
+    delete upstreamHeaders.host;
+    delete upstreamHeaders.cookie;
+    delete upstreamHeaders.connection;
+
+    const upstream = http.request({
+      host: "127.0.0.1",
+      port: internalPort,
+      method: req.method,
+      path: req.url || "/",
+      headers: upstreamHeaders,
+    }, (upstreamResponse) => {
+      res.writeHead(upstreamResponse.statusCode || 502, securityHeaders(upstreamResponse.headers));
+      upstreamResponse.pipe(res);
+    });
+
+    upstream.on("error", (err) => {
+      if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
+      res.end("Local application server unavailable");
+      console.error("Protected proxy upstream error:", err.message);
+    });
+
+    req.pipe(upstream);
+  });
+
+  await new Promise((resolve, reject) => {
+    proxyServer.once("error", reject);
+    proxyServer.listen(proxyPort, "127.0.0.1", resolve);
+  });
+
+  return `http://127.0.0.1:${proxyPort}/`;
+}
+
+async function installProxyCookie(proxyUrl) {
+  await session.defaultSession.cookies.set({
+    url: proxyUrl,
+    name: "cbms_session",
+    value: proxyToken,
+    path: "/",
+    httpOnly: true,
+    secure: false,
+    sameSite: "strict",
+  });
+}
+
+async function stopLocalServers() {
+  if (proxyServer) {
+    await new Promise((resolve) => {
+      try { proxyServer.close(() => resolve()); } catch { resolve(); }
+    });
+    proxyServer = null;
+  }
+  proxyToken = null;
+  if (serverProcess) {
+    try { serverProcess.kill(); } catch {}
+    serverProcess = null;
+  }
+}
+
 async function startServer() {
+  // Development mode is served directly by Vite. The production server bundle
+  // does not exist until `npm run build`, so trying to fork .output here makes
+  // `npm run electron:dev` open an empty/failed Electron window.
+  if (!app.isPackaged) {
+    const devUrl = "http://127.0.0.1:8080/";
+    await waitForServer(devUrl, 45000);
+    appOrigin = new URL(devUrl).origin;
+    return devUrl;
+  }
+
   const candidates = [
     path.join(process.resourcesPath || "", ".output", "server", "index.mjs"),
     path.join(process.resourcesPath || "", "app", ".output", "server", "index.mjs"),
@@ -599,23 +930,21 @@ async function startServer() {
   ];
 
   const serverEntry = candidates.find((c) => c && fs.existsSync(c));
-  if (!serverEntry) {
-    throw new Error(`Build output not found at any candidate path.`);
-  }
+  if (!serverEntry) throw new Error(`Build output not found at any candidate path.`);
 
-  const port = await getFreePort();
-
+  const internalPort = await getFreePort();
   serverProcess = fork(serverEntry, [], {
-    env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", NODE_ENV: "production" },
+    env: { ...process.env, PORT: String(internalPort), HOST: "127.0.0.1", NODE_ENV: "production" },
     stdio: ["ignore", "inherit", "inherit", "ipc"],
   });
 
-  const url = `http://127.0.0.1:${port}/`;
-  await waitForServer(url);
-  return url;
+  const internalUrl = `http://127.0.0.1:${internalPort}/`;
+  await waitForServer(internalUrl);
+  const protectedUrl = await createProtectedProxy(internalPort);
+  appOrigin = new URL(protectedUrl).origin;
+  await installProxyCookie(protectedUrl);
+  return protectedUrl;
 }
-
-let updaterInterval = null;
 
 function sendUpdaterEvent(channel, payload = {}) {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -625,9 +954,9 @@ function sendUpdaterEvent(channel, payload = {}) {
   }
 }
 
-ipcMain.handle("get-app-version", () => app.getVersion());
+secureIpcHandle("get-app-version", () => app.getVersion());
 
-ipcMain.handle("check-for-updates", async () => {
+secureIpcHandle("check-for-updates", async () => {
   if (!app.isPackaged) return { ok: false, packaged: false, message: "Updates are available only in the packaged desktop application." };
   try {
     const result = await autoUpdater.checkForUpdates();
@@ -658,19 +987,44 @@ async function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: path.join(__dirname, "preload.cjs"), // Changed to preload.cjs
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      devTools: !app.isPackaged,
+      preload: path.join(__dirname, "preload.cjs"),
     },
   });
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http:") || url.startsWith("https:")) {
-      shell.openExternal(url);
+  mainWindow = win;
+
+  const handleNavigation = (event, url) => {
+    try {
+      const target = new URL(url);
+      if (target.origin === appOrigin) return;
+      event.preventDefault();
+      if (isAllowedExternalUrl(target.href)) shell.openExternal(target.href);
+    } catch {
+      event.preventDefault();
     }
+  };
+
+  win.webContents.on("will-navigate", handleNavigation);
+  win.webContents.on("will-redirect", handleNavigation);
+  win.webContents.on("will-attach-webview", (event) => { event.preventDefault(); });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedExternalUrl(url)) shell.openExternal(url);
     return { action: "deny" };
   });
 
-  const url = await startServer();
-  await win.loadURL(url);
+  try {
+    const url = await startServer();
+    await win.loadURL(url);
+  } catch (err) {
+    await stopLocalServers();
+    if (mainWindow === win) mainWindow = null;
+    if (!win.isDestroyed()) win.destroy();
+    throw err;
+  }
   // Launch maximized to the Windows work area (taskbar remains visible);
   // this is intentionally not Electron's exclusive fullscreen mode.
   win.maximize();
@@ -737,8 +1091,14 @@ function configureAutoUpdater() {
 }
 
 app.whenReady().then(() => {
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
   getLogFilePath(); // Forces the saves folder to create immediately on startup
-  createWindow();
+  createWindow().catch((err) => {
+    console.error("Failed to start CBMS Insights:", err);
+    dialog.showErrorBox("CBMS Insights could not start", err instanceof Error ? err.message : String(err));
+    app.quit();
+  });
   configureAutoUpdater();
 });
 
@@ -747,9 +1107,20 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow().catch((err) => {
+      console.error("Failed to recreate CBMS Insights window:", err);
+      app.quit();
+    });
+  }
+});
+
+app.on("before-quit", () => {
+  if (updaterInterval) { clearInterval(updaterInterval); updaterInterval = null; }
+  try { void session.defaultSession.cookies.remove(`${appOrigin}/`, "cbms_session"); } catch {}
+  void stopLocalServers();
 });
 
 app.on("quit", () => {
-  if (serverProcess) serverProcess.kill();
+  if (updaterInterval) { clearInterval(updaterInterval); updaterInterval = null; }
 });

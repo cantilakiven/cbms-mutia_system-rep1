@@ -14,20 +14,33 @@ permissions:
   actions: read
 
 jobs:
-  codeql:
-    name: CodeQL
+  security:
+    name: CodeQL and dependency security
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       - name: Validate repository safety
-        run: node scripts/check-project-safety.mjs
+        run: npm run validate:project
+
+      - name: Audit high and critical vulnerabilities
+        run: npm audit --audit-level=high
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: javascript-typescript
           queries: security-and-quality
+
       - name: Analyze
-        continue-on-error: true
         uses: github/codeql-action/analyze@v3

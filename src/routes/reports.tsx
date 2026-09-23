@@ -78,14 +78,31 @@ function ReportsPage() {
           </div>
         </aside>
 
-        <DataTable
-          title={tableTitle}
-          subtitle={`${report.tabName} · ${report.group} · ${result.total.toLocaleString()} ${report.source === "households" ? "household" : report.source === "persons" ? "person" : "barangay"} base`}
-          rows={result.rows}
-          columns={columns}
-          searchable
-          pageSize={50}
-        />
+        <div className="min-w-0 space-y-5">
+          <DataTable
+            title={tableTitle}
+            subtitle={`${report.tabName} · ${report.group} · ${result.total.toLocaleString()} ${report.source === "households" ? "household" : report.source === "persons" ? "person" : "barangay"} base`}
+            rows={result.rows}
+            columns={columns}
+            searchable
+            pageSize={50}
+          />
+          {Boolean(result.byBarangayRows?.length) && (
+            <DataTable
+              title={`${tableTitle} — Summary by Barangay`}
+              subtitle="Each percentage/rate is recalculated from that barangay’s own applicable report denominator."
+              rows={result.byBarangayRows || []}
+              columns={[
+                { key: "barangay", label: "Barangay" },
+                { key: "category", label: report.kind === "summary" ? "Indicator" : "Category" },
+                { key: "count", label: report.kind === "summary" ? "Value" : report.source === "households" ? "Households" : "Persons" },
+                { key: "percent", label: "Percentage / Rate" },
+              ]}
+              searchable
+              pageSize={50}
+            />
+          )}
+        </div>
       </div>
 
       <footer className="border-t border-border pt-4 text-center text-[11px] text-muted-foreground">

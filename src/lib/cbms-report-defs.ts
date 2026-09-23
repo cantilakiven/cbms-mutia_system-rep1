@@ -33,6 +33,8 @@ export interface ReportResult {
   total: number;
   denominator?: number;
   note?: string;
+  /** Barangay-scoped companion rows using that barangay's own report denominator. */
+  byBarangayRows?: (ReportRow & { barangay: string })[];
 }
 
 export function householdSizeBucket(n: any): string {
@@ -335,7 +337,31 @@ function filteredRows(report: ReportDef, datasets: { households: any[]; persons:
   return report.filter ? rows.filter(report.filter) : rows;
 }
 
-export function buildReportResult(report: ReportDef, datasets: { households: any[]; persons: any[]; barangays?: any[] }): ReportResult {
+function sameBarangay(row: any, barangay: string) {
+  return String(row?.area_name ?? "").trim().toLocaleLowerCase() === barangay.toLocaleLowerCase();
+}
+
+function scopeDatasetsToBarangay(
+  datasets: { households: any[]; persons: any[]; barangays?: any[] },
+  barangay: string,
+) {
+  return {
+    households: (datasets.households || []).filter((row) => sameBarangay(row, barangay)),
+    persons: (datasets.persons || []).filter((row) => sameBarangay(row, barangay)),
+    barangays: (datasets.barangays || []).filter((row) => sameBarangay(row, barangay)),
+  };
+}
+
+function availableBarangaysForReport(report: ReportDef, datasets: { households: any[]; persons: any[]; barangays?: any[] }) {
+  const rows = getRowsFor(report, datasets);
+  return Array.from(new Set(
+    rows
+      .map((row) => String(row?.area_name ?? "").trim())
+      .filter(Boolean),
+  )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+}
+
+function buildReportResultCore(report: ReportDef, datasets: { households: any[]; persons: any[]; barangays?: any[] }): ReportResult {
   if (report.kind === "summary") {
     const households = datasets.households || [];
     const persons = datasets.persons || [];
@@ -363,7 +389,7 @@ export function buildReportResult(report: ReportDef, datasets: { households: any
       const group = rowsIn.filter((p) => sexLabel(p) === s);
       const employed = group.filter(isEmployed).length;
       const unemployed = group.filter(isUnemployed).length;
-      const underemployed = group.filter((p) => isEmployed(p) && /underemployed/i.test(String(read(p, ["e01_underemployment_status", "underemployment_status"])))) .length;
+      const underemployed = group.filter((p) => isEmployed(p) && /underemployed/i.test(String(read(p, ["e01_underemployment_status", "underemployment_status"])))).length;
       rows.push({ category: `${s} — Employed`, count: employed, percent: total ? `${((employed / total) * 100).toFixed(2)}%` : "0%" });
       rows.push({ category: `${s} — Unemployed`, count: unemployed, percent: total ? `${((unemployed / total) * 100).toFixed(2)}%` : "0%" });
       rows.push({ category: `${s} — Underemployed`, count: underemployed, percent: employed ? `${((underemployed / employed) * 100).toFixed(2)}% of employed` : "0.00% of employed" });
@@ -421,6 +447,26 @@ export function buildReportResult(report: ReportDef, datasets: { households: any
     .map(([category, count]) => ({ category, count, percent: total ? `${((count / total) * 100).toFixed(2)}%` : "0%" }))
     .sort((a, b) => b.count - a.count || a.category.localeCompare(b.category, undefined, { sensitivity: "base", numeric: true }));
   return { rows, total, denominator: total, note: report.note };
+}
+
+export function buildReportResult(report: ReportDef, datasets: { households: any[]; persons: any[]; barangays?: any[] }): ReportResult {
+  const overall = buildReportResultCore(report, datasets);
+  if (report.kind === "barangay-status") return { ...overall, byBarangayRows: [] };
+
+  const byBarangayRows: (ReportRow & { barangay: string })[] = [];
+  for (const barangay of availableBarangaysForReport(report, datasets)) {
+    const scoped = buildReportResultCore(report, scopeDatasetsToBarangay(datasets, barangay));
+    for (const row of scoped.rows) {
+      byBarangayRows.push({
+        barangay,
+        category: row.category,
+        count: row.count,
+        percent: row.percent,
+        ...(("valueType" in row) ? { valueType: row.valueType } : {}),
+      });
+    }
+  }
+  return { ...overall, byBarangayRows };
 }
 
 /** Backwards-compatible helper for modules that already pass a flat dataset. */
