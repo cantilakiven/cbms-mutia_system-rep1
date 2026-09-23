@@ -1,0 +1,137 @@
+name: Build and Release CBMS Insights Desktop
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  RELEASE_DIR: release
+
+concurrency:
+  group: cbms-insights-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Validate repository safety
+        run: npm run validate:project
+
+      - name: Verify package version matches tag
+        shell: pwsh
+        run: |
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tagVersion = "${env:GITHUB_REF_NAME}" -replace '^v',''
+          if ($packageVersion -ne $tagVersion) {
+            Write-Error "Release tag v$tagVersion must exactly match package.json version $packageVersion."
+            exit 1
+          }
+
+      - name: Build web application
+        run: npm run build
+
+      - name: Build Windows NSIS installer and updater metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Validate generated updater metadata
+        run: npm run validate:release
+
+      - name: Inspect generated release files
+        shell: pwsh
+        run: |
+          if (-not (Test-Path $env:RELEASE_DIR)) {
+            Write-Error "Release directory was not created."
+            exit 1
+          }
+
+          Get-ChildItem $env:RELEASE_DIR -File | Select-Object Name, Length | Format-Table -AutoSize
+
+          $exe = Get-ChildItem $env:RELEASE_DIR -Filter '*.exe' -File | Select-Object -First 1
+          $yml = Get-ChildItem $env:RELEASE_DIR -Filter 'latest.yml' -File | Select-Object -First 1
+          $blockmap = Get-ChildItem $env:RELEASE_DIR -Filter '*.blockmap' -File | Select-Object -First 1
+
+          if (-not $exe) { Write-Error 'Windows NSIS installer .exe was not produced.'; exit 1 }
+          if (-not $yml) { Write-Error 'latest.yml was not produced.'; exit 1 }
+          if (-not $blockmap) { Write-Error 'Windows blockmap was not produced.'; exit 1 }
+
+          Write-Host "Installer: $($exe.FullName)"
+          Write-Host "Updater metadata: $($yml.FullName)"
+          Write-Host "Blockmap: $($blockmap.FullName)"
+
+      - name: Ensure GitHub Release exists and upload all updater assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $exe = Get-ChildItem $env:RELEASE_DIR -Filter '*.exe' -File | Select-Object -First 1
+          $yml = Get-ChildItem $env:RELEASE_DIR -Filter 'latest.yml' -File | Select-Object -First 1
+          $blockmap = Get-ChildItem $env:RELEASE_DIR -Filter '*.blockmap' -File | Select-Object -First 1
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; uploading/replacing only the three expected Windows updater assets."
+          } else {
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --title "CBMS Insights $tag" --generate-notes --latest
+            if ($LASTEXITCODE -ne 0) { throw "Unable to create GitHub Release $tag" }
+          }
+
+          gh release upload $tag $exe.FullName $yml.FullName $blockmap.FullName --repo $env:GITHUB_REPOSITORY --clobber
+
+      - name: Verify GitHub Release contains installer and updater metadata
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets | ConvertFrom-Json
+          $names = @($release.assets | ForEach-Object { $_.name })
+
+          Write-Host "Published assets:"
+          $names | Sort-Object | ForEach-Object { Write-Host " - $_" }
+
+          if (-not ($names | Where-Object { $_ -match '\.exe$' })) {
+            Write-Error 'GitHub Release is missing the Windows .exe installer.'
+            exit 1
+          }
+          if (-not ($names -contains 'latest.yml')) {
+            Write-Error 'GitHub Release is missing latest.yml.'
+            exit 1
+          }
+          if (-not ($names | Where-Object { $_ -match '\.blockmap$' })) {
+            Write-Error 'GitHub Release is missing the .blockmap file.'
+            exit 1
+          }
+
+          Write-Host 'GitHub Release verification passed.'
+
+      - name: Upload build artifacts to Actions for troubleshooting
+        uses: actions/upload-artifact@v6
+        with:
+          name: CBMS-Insights-Windows-${{ github.ref_name }}
+          path: |
+            release/*.exe
+            release/latest.yml
+            release/*.blockmap
+          if-no-files-found: error
+          retention-days: 14

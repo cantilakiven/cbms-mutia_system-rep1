@@ -116,8 +116,7 @@ function ExportLogPage() {
           <Trash2 className="h-4 w-4" /> Clear log
         </Button>
 
-        {import.meta.env.DEV && (
-<Button
+        <Button
           variant="outline"
           size="sm"
           onClick={async () => {
@@ -142,7 +141,6 @@ function ExportLogPage() {
         >
           Debug
         </Button>
-        )}
       </div>
 
       <div className="rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs text-warning-foreground">

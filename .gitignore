@@ -1,1 +1,65 @@
+# Dependency / build output
 node_modules
+coverage
+release
+release/**
+dist
+dist-ssr
+.output
+.vinxi
+.tanstack/**
+.nitro
+*.local
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Electron / generated release artifacts — do not commit installers or updater metadata
+*.exe
+*.msi
+*.blockmap
+latest.yml
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+*.zip
+
+# Raw CBMS / source-data files — municipal data must never be committed
+*.RData
+*.rdata
+*.Rda
+*.rda
+*.RDS
+*.rds
+cbms_*_record*.json
+cbms_*.json
+097208*.json
+*_CBMS_*.json
+
+# Private credentials / signing material
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+
+# Wrangler / Cloudflare
+.wrangler/
+.dev.vars
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

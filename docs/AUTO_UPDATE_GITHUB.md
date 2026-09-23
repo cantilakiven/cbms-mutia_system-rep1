@@ -1,6 +1,6 @@
 # GitHub Releases and Automatic Updates
 
-> **Repository migration:** The updater feed is now `github.com/cantilakiven/cbms-insight_system`. Existing installations that were built with the former repository configuration will not automatically learn the new feed until they install a build containing this repository change; publish a bridge release on the old feed if seamless migration of already-installed builds is required.
+> **Repository migration:** The updater feed is now `github.com/cantilakiven/cbms-mutia_system-rep1`. Existing installations that were built with the former repository configuration will not automatically learn the new feed until they install a build containing this repository change; publish a bridge release on the old feed if seamless migration of already-installed builds is required.
 
 ## Production release assets
 
@@ -72,5 +72,5 @@ If the source repository is public, GitHub will make the tag source archive visi
 
 ### npm dependency installation in GitHub Actions
 
-The release workflow intentionally uses `npm install` and does not commit a `package-lock.json`. `actions/setup-node` dependency caching requires a lockfile when `cache: npm` is enabled, so the workflow explicitly sets `package-manager-cache: false`. This avoids the `Dependencies lock file is not found` failure while keeping the release reproducible through the exact `package.json` dependency ranges checked into the repository.
+The release workflow commits `package-lock.json`, uses `npm ci` for reproducible installs, and enables `actions/setup-node` npm caching. Keep the lockfile in sync with `package.json` whenever dependencies or the application version are changed.
 
