@@ -14,10 +14,3 @@ export const getRouter = () => {
 
   return router;
 };
-
-// Declare module augmentation for TanStack Router type safety
-declare module "@tanstack/react-router" {
-  interface Register {
-    router: ReturnType<typeof getRouter>;
-  }
-}

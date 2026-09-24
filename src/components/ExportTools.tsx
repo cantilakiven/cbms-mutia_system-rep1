@@ -233,14 +233,14 @@ export function PrintPreviewModal() {
               {pages.map((src, i) => <button key={i} onClick={() => setPage(i)} className={`block w-full rounded-xl border p-1.5 text-left transition ${page === i ? "border-primary bg-primary/10 shadow-sm" : "border-border bg-background hover:bg-muted"}`}>
                 <div className="mb-1 flex items-center justify-between px-1 text-[9px] font-black"><span>Page {i + 1}</span>{i === 0 ? <span>First</span> : null}</div>
                 <div className="overflow-hidden rounded-md border border-border bg-white" style={{ aspectRatio: `${orientedWidthMm} / ${orientedHeightMm}` }}>
-                  <iframe title={`Page ${i + 1} thumbnail`} srcDoc={src} sandbox="" referrerPolicy="no-referrer" className="pointer-events-none h-full w-full border-0" />
+                  <iframe title={`Page ${i + 1} thumbnail`} srcDoc={src} className="pointer-events-none h-full w-full border-0" />
                 </div>
               </button>)}
             </div>
           </div>
         </aside>
 
-        <main ref={previewAreaRef} className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-slate-100/70 p-3">
+        <main ref={previewAreaRef} className="min-h-0 min-w-0 overflow-hidden rounded-xl border border-border bg-slate-100/70 p-3">
           <div className="mb-2.5 flex shrink-0 items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="rounded-full border border-border bg-background px-2.5 py-1 font-semibold">Page {page + 1} of {pages.length}</span><span>{selectedPaper.label} · {orientation}</span></div>
             <div className="flex items-center gap-1 rounded-xl border border-border bg-background p-1 shadow-sm">
@@ -254,18 +254,9 @@ export function PrintPreviewModal() {
             </div>
           </div>
 
-          <div
-            className="cbms-preview-scroller flex min-h-0 min-w-0 flex-1 items-start justify-start overflow-auto rounded-xl border border-border/70 bg-[radial-gradient(circle_at_center,rgba(255,255,255,.98),rgba(226,232,240,.8))] p-3 [scrollbar-gutter:stable_both-edges]"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "PageDown") e.currentTarget.scrollBy({ top: e.currentTarget.clientHeight * 0.85, behavior: "smooth" });
-              if (e.key === "PageUp") e.currentTarget.scrollBy({ top: -e.currentTarget.clientHeight * 0.85, behavior: "smooth" });
-              if (e.key === "Home") e.currentTarget.scrollTo({ top: 0, behavior: "smooth" });
-              if (e.key === "End") e.currentTarget.scrollTo({ top: e.currentTarget.scrollHeight, behavior: "smooth" });
-            }}
-          >
-            <div className="relative mx-auto shrink-0" style={{ width: displayW, height: displayH, minWidth: displayW, minHeight: displayH }}>
-              <iframe key={`preview-${paperSize}-${orientation}-${page}-${pages.length}`} title="Printable paper preview" srcDoc={currentPage} sandbox="" referrerPolicy="no-referrer" className="absolute left-0 top-0 block origin-top-left border-0 bg-white shadow-[0_18px_50px_rgba(15,23,42,.18)]" style={{ width: paperWidthPx, height: paperHeightPx, transform: `scale(${zoom})` }} />
+          <div className="cbms-preview-scroller flex h-[calc(100%-44px)] min-h-0 min-w-0 items-start justify-start overflow-auto rounded-xl border border-border/70 bg-[radial-gradient(circle_at_center,rgba(255,255,255,.98),rgba(226,232,240,.8))] p-3 [scrollbar-gutter:stable_both-edges]">
+            <div className="relative shrink-0 mx-auto" style={{ width: displayW, height: displayH, minWidth: displayW, minHeight: displayH }}>
+              <iframe key={`preview-${paperSize}-${orientation}-${page}-${pages.length}`} title="Printable paper preview" srcDoc={currentPage} className="absolute left-0 top-0 block origin-top-left border-0 bg-white shadow-[0_18px_50px_rgba(15,23,42,.18)]" style={{ width: paperWidthPx, height: paperHeightPx, transform: `scale(${zoom})` }} />
             </div>
           </div>
         </main>

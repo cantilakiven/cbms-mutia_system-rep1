@@ -13,7 +13,10 @@ import MonthlyCheckinModal from "@/components/MonthlyCheckinModal";
 import { AppShell } from "@/components/AppShell";
 import logo from "@/assets/cbms-insights-logo.png";
 import { LockKeyhole, ShieldCheck, Loader2 } from "lucide-react";
+import NexusParticles from "@/components/NexusParticles";
 import { useEffect, useState, useLayoutEffect } from "react";
+
+const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 function NotFoundComponent() {
   return (
@@ -77,10 +80,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Community Data & Insights" },
+      { title: "CBMS Insights" },
       { name: "description", content: "CBMS-based community profiling, search and reports for LGUs and barangays." },
-      { name: "author", content: "LMDAS" },
-      { property: "og:title", content: "Community Data & Insights" },
+      { name: "author", content: "Kiven Cantila" },
+      { property: "og:title", content: "CBMS Insights" },
       { property: "og:description", content: "CBMS-based community profiling for Philippine LGUs." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -134,7 +137,7 @@ function SecureLoginGate() {
   const [storageError, setStorageError] = useState("");
 
   // Synchronously block execution before screen paint
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     let mounted = true;
     void (async () => {
       try {
@@ -183,11 +186,12 @@ function SecureLoginGate() {
   // 1. Initial Check In Progress -> Render loader screen ONLY
   if (checking) {
     return (
-      <div className="relative min-h-screen overflow-hidden bg-slate-950 p-6 grid place-items-center">
-        <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(2,12,27,.92),rgba(9,37,68,.78)_45%,rgba(2,12,27,.92))]" />
+      <div className="security-gate relative min-h-screen overflow-hidden bg-slate-950 p-6 grid place-items-center">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(8,47,73,.36),transparent_32%),linear-gradient(135deg,rgba(2,12,27,.98),rgba(9,37,68,.84)_45%,rgba(2,12,27,.98))]" />
         <div className="pointer-events-none absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(255,255,255,.05)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.05)_1px,transparent_1px)] [background-size:36px_36px]" />
+        <NexusParticles className="z-0" density={58} />
 
-        <main className="relative flex flex-col items-center justify-center p-8 text-center">
+        <main className="relative z-10 flex flex-col items-center justify-center p-8 text-center">
           <div className="relative flex items-center justify-center">
             <div className="absolute h-24 w-24 animate-ping rounded-full bg-cyan-500/20 duration-1000" />
             <div className="absolute h-20 w-20 animate-spin rounded-full border-2 border-cyan-400/20 border-t-cyan-400" />
@@ -197,10 +201,10 @@ function SecureLoginGate() {
           </div>
 
           <div className="mt-6 flex flex-col items-center gap-2">
-            <h2 className="text-base font-bold tracking-wide text-white">
-              Securing system
+            <h2 className="security-progress-title text-base font-black tracking-[0.16em] text-white">
+              Securing system<span className="security-progress-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span>
             </h2>
-            <div className="flex items-center gap-2 text-xs font-medium text-slate-400">
+            <div className="security-progress-caption flex items-center gap-2 text-xs font-medium text-slate-400">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-400" />
               <span>Verifying local security records...</span>
             </div>
@@ -281,10 +285,11 @@ function SecureLoginGate() {
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950 p-6 grid place-items-center">
-      <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(2,12,27,.92),rgba(9,37,68,.78)_45%,rgba(2,12,27,.92))]" />
+    <div className="security-gate relative min-h-screen overflow-hidden bg-slate-950 p-6 grid place-items-center">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(8,47,73,.36),transparent_34%),linear-gradient(135deg,rgba(2,12,27,.96),rgba(9,37,68,.82)_45%,rgba(2,12,27,.96))]" />
       <div className="pointer-events-none absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(255,255,255,.05)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.05)_1px,transparent_1px)] [background-size:36px_36px]" />
-      <main className="relative w-full max-w-md overflow-hidden rounded-[30px] border border-white/25 bg-slate-950/70 p-7 shadow-[0_30px_100px_rgba(0,0,0,.45)] backdrop-blur-xl">
+      <NexusParticles className="z-0" density={58} />
+      <main className="security-gate-card relative z-10 w-full max-w-md overflow-hidden rounded-[30px] border border-white/25 bg-slate-950/70 p-7 shadow-[0_30px_100px_rgba(0,0,0,.45)] backdrop-blur-xl">
         <div className="pointer-events-none absolute inset-0 rounded-[30px] ring-1 ring-inset ring-white/10" />
         <div className="relative flex items-center gap-4">
           <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-white/20 bg-white/95 p-2 shadow-xl">
@@ -364,6 +369,24 @@ function SecureLoginGate() {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  useEffect(() => {
+    const preventOutboundDrag = (event: DragEvent) => {
+      const target = event.target as Element | null;
+      if (!target) return;
+
+      // Prevent dragging links, images, buttons, or other navigational UI into
+      // a normal browser. Import/drop areas remain available because ordinary
+      // file drops are not affected unless their target is a navigational element.
+      if (target.closest("a, img, button, [data-outbound-drag-disabled=\"true\"]")) {
+        event.preventDefault();
+      }
+    };
+
+    document.addEventListener("dragstart", preventOutboundDrag, true);
+    return () => document.removeEventListener("dragstart", preventOutboundDrag, true);
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <SecureLoginGate />

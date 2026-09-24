@@ -875,3 +875,39 @@ body {
   .app-mobile-year-item { min-width:138px; }
   .app-mobile-year-switch .app-year-button { min-width:45px; font-size:9px; }
 }
+
+
+/* Security gate motion — restrained so the login screen remains professional. */
+.security-progress-title {
+  text-shadow: 0 0 18px rgba(103,232,249,.20);
+  background: linear-gradient(90deg, #e2faff 0%, #67e8f9 35%, #ffffff 52%, #67e8f9 70%, #e2faff 100%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: security-title-shimmer 2.2s ease-in-out infinite;
+}
+.security-progress-dots { display:inline-flex; min-width:1.15em; margin-left:.08em; color:#67e8f9; }
+.security-progress-dots i { font-style:normal; opacity:.28; animation: security-dot-pulse 1.15s infinite; }
+.security-progress-dots i:nth-child(2) { animation-delay:.16s; }
+.security-progress-dots i:nth-child(3) { animation-delay:.32s; }
+.security-progress-caption { animation: security-caption-pulse 1.8s ease-in-out infinite; }
+.security-gate-card {
+  box-shadow: 0 32px 110px rgba(0,0,0,.48), 0 0 42px rgba(34,211,238,.07);
+}
+@keyframes security-title-shimmer {
+  0%,100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+@keyframes security-dot-pulse {
+  0%,35%,100% { opacity:.22; transform:translateY(0); }
+  15% { opacity:1; transform:translateY(-1px); }
+}
+@keyframes security-caption-pulse {
+  0%,100% { opacity:.72; }
+  50% { opacity:1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .security-progress-title, .security-progress-caption, .security-progress-dots i { animation:none !important; }
+}

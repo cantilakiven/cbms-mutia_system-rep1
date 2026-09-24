@@ -37,38 +37,23 @@ function CompendiumPage() {
   const barangayOptions = getAvailableBarangays(year);
   const [book, setBook] = useState<ReturnType<typeof buildBook> | null>(null);
   const [building, setBuilding] = useState(false);
-  const [buildProgress, setBuildProgress] = useState(1);
   const [buildPhase, setBuildPhase] = useState("Preparing CBMS report");
 
   useEffect(() => {
     let alive = true;
     setBook(null);
     setBuilding(true);
-    setBuildProgress(1);
     setBuildPhase("Preparing CBMS report");
-    const getPhase = (value: number) =>
-      value < 28 ? "Preparing CBMS report" : value < 58 ? "Calculating CBMS tables" : value < 82 ? "Building comparative graphs" : value < 100 ? "Assembling the report book" : "Compendium ready";
     const phaseTimer = window.setInterval(() => {
-      setBuildProgress((current) => {
-        if (current >= 94) return current;
-        const increment = current < 28 ? 4 : current < 58 ? 3 : current < 82 ? 2 : 1;
-        const next = Math.min(94, current + increment);
-        setBuildPhase(getPhase(next));
-        return next;
-      });
-    }, 180);
+      setBuildPhase((current) => current === "Preparing CBMS report" ? "Calculating CBMS tables" : current === "Calculating CBMS tables" ? "Building comparative graphs" : current === "Building comparative graphs" ? "Assembling the report book" : "Preparing CBMS report");
+    }, 700);
     const run = () => {
       if (!alive) return;
       const next = buildBook({ year, barangay, sections: selected, includeNameLists: includeNames });
-      if (alive) {
-        setBuildProgress(100);
-        setBuildPhase("Compendium ready");
-        setBook(next);
-        window.setTimeout(() => { if (alive) setBuilding(false); }, 180);
-      }
+      if (alive) { setBook(next); setBuilding(false); setBuildPhase("Compendium ready"); }
     };
     const ric = (window as any).requestIdleCallback;
-    const id = ric ? (window as any).requestIdleCallback(run, { timeout: 900 }) : window.setTimeout(run, 60);
+    const id = ric ? ric(run, { timeout: 900 }) : window.setTimeout(run, 60);
     return () => { alive = false; window.clearInterval(phaseTimer); if (ric) (window as any).cancelIdleCallback?.(id); else window.clearTimeout(id); };
   }, [year, barangay, selected, includeNames, ds.persons.length, ds.households.length, version]);
 
@@ -121,59 +106,12 @@ function CompendiumPage() {
             <p className="mt-1 text-sm leading-6 text-muted-foreground">The report engine is preparing the selected CBMS year without blocking the rest of the application.</p>
           </div>
         </div>
-        <div className="relative mt-7 flex flex-col gap-5 sm:flex-row sm:items-center">
-          <div
-            className="relative flex h-24 w-24 shrink-0 items-center justify-center rounded-full p-1 shadow-inner"
-            style={{ background: `conic-gradient(hsl(var(--primary)) ${buildProgress * 3.6}deg, hsl(var(--muted)) 0deg)` }}
-          >
-            <div className="flex h-full w-full items-center justify-center rounded-full bg-card">
-              <div className="text-center">
-                <div className="font-display text-xl font-black tabular-nums">{buildProgress}%</div>
-                <div className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">loading</div>
-              </div>
-            </div>
-            <div className="absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-primary/60" style={{ animationDuration: "1.8s" }} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-              <span className="font-bold text-foreground">{buildPhase}</span>
-              <span className="font-mono font-bold text-primary">{buildProgress}%</span>
-            </div>
-            <div className="h-3 overflow-hidden rounded-full bg-muted shadow-inner">
-              <div
-                className="relative h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
-                style={{ width: `${buildProgress}%` }}
-              >
-                <div className="absolute inset-0 animate-[pulse_1.2s_ease-in-out_infinite] bg-white/20" />
-                <div className="absolute right-0 top-0 h-full w-10 animate-[ping_1.8s_ease-in-out_infinite] rounded-full bg-white/30" />
-              </div>
-            </div>
-            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>Preparing selected CBMS year and report sections</span>
-              <span className="font-mono">CBMS {year}</span>
-            </div>
-          </div>
+        <div className="relative mt-7 overflow-hidden rounded-full bg-muted h-2.5">
+          <div className="h-full w-2/5 animate-[pulse_1.4s_ease-in-out_infinite] rounded-full bg-primary" />
         </div>
+        <div className="relative mt-4 flex items-center justify-between gap-3 text-xs text-muted-foreground"><span className="font-semibold text-foreground">{buildPhase}</span><span className="font-mono">CBMS {year}</span></div>
         <div className="relative mt-5 grid gap-3 sm:grid-cols-3">
-          {["Core reports", "Sector tables", "Comparative graphs"].map((label, i) => {
-            const start = i * 33.33;
-            const done = buildProgress >= (i + 1) * 33.33;
-            const active = buildProgress >= start && buildProgress < (i + 1) * 33.33;
-            return (
-              <div key={label} className={`rounded-xl border p-3 transition-all duration-500 ${done ? "border-primary/30 bg-primary/5" : active ? "border-primary/50 bg-primary/10 shadow-sm" : "border-border bg-muted/25"}`}>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className={`h-2.5 w-2.5 rounded-full ${done ? "bg-primary" : active ? "animate-pulse bg-primary" : "bg-muted-foreground/30"}`} />
-                    <span className="text-xs font-bold">{label}</span>
-                  </div>
-                  <span className="text-[9px] font-black uppercase tracking-wider text-muted-foreground">{done ? "done" : active ? "working" : "queued"}</span>
-                </div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                  <div className={`h-full rounded-full transition-all duration-500 ${done ? "w-full bg-primary" : active ? "w-2/3 bg-primary/70" : "w-0"}`} />
-                </div>
-              </div>
-            );
-          })}
+          {['Core reports','Sector tables','Comparative graphs'].map((label,i)=><div key={label} className="rounded-xl border border-border bg-muted/25 p-3"><div className="flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${i===0?'animate-pulse bg-emerald-500':i===1?'animate-pulse bg-amber-500':'animate-pulse bg-primary'}`}/><span className="text-xs font-bold">{label}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full w-3/5 animate-pulse rounded-full bg-primary/50" /></div></div>)}
         </div>
       </section>
     </div>;

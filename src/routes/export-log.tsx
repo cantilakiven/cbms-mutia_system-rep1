@@ -86,7 +86,7 @@ function ExportLogPage() {
       <div>
         <h1 className="font-display text-2xl font-bold">Export Log &amp; Password Vault</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Protected exports are recorded here with the password and exact saved path. PDF/Word compendiums use AES-256 protected ZIP containers; interactive HTML compendiums use AES-256-GCM inside the HTML file. On the desktop app, the local Export Log is AES-256-GCM encrypted at rest; browser localStorage keeps only a password-free backup.
+          Protected exports are recorded here with the password and exact saved path. PDF/Word compendiums use AES-256 protected ZIP containers; interactive HTML compendiums use AES-256-GCM inside the HTML file. This log is stored locally on this computer only.
         </p>
       </div>
 
@@ -116,18 +116,21 @@ function ExportLogPage() {
           <Trash2 className="h-4 w-4" /> Clear log
         </Button>
 
-        <Button
+        {import.meta.env.DEV && (
+<Button
           variant="outline"
           size="sm"
           onClick={async () => {
             try {
               const userDataPath = (window as any).electronStore?.getUserDataPath ? await (window as any).electronStore.getUserDataPath() : null;
               const exportLogPath = (window as any).electronStore?.getExportLogPath ? await (window as any).electronStore.getExportLogPath() : null;
+              const fileContents = (window as any).electronDebug?.readFile && exportLogPath ? await (window as any).electronDebug.readFile(exportLogPath) : null;
               const mainLog = (window as any).electronLog?.getLog ? await (window as any).electronLog.getLog() : null;
               alert(
-                'Diagnostics:\n' +
+                'Debug info:\n' +
                 `userDataPath: ${userDataPath || 'n/a'}\n` +
                 `exportLogPath: ${exportLogPath || 'n/a'}\n` +
+                `file on disk: ${fileContents ? 'present' : 'missing'}\n` +
                 `entries read via main: ${mainLog ? (mainLog.length || 0) : 'n/a'}\n` +
                 `entries in renderer cache: ${safeLog.length}`
               );
@@ -137,8 +140,9 @@ function ExportLogPage() {
             }
           }}
         >
-          Diagnostics
+          Debug
         </Button>
+        )}
       </div>
 
       <div className="rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs text-warning-foreground">
@@ -166,7 +170,7 @@ function ExportLogPage() {
                 <div className="flex shrink-0 gap-1.5"><Button size="sm" variant="outline" onClick={()=>setReveal((s)=>({...s,[e.id]:!s[e.id]}))}>{visible?<EyeOff className="h-4 w-4"/>:<Eye className="h-4 w-4"/>}{visible?"Hide":"Show"}</Button><Button size="sm" onClick={()=>copy(e.password||"")}><Copy className="h-4 w-4"/> Copy password</Button><Button size="sm" variant="ghost" onClick={()=>{if(confirm(`Delete log entry for ${e.filename}?`)) deleteExportLogEntry(e.id)}} title="Delete entry"><Trash2 className="h-4 w-4 text-destructive"/></Button></div>
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-3">
-                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 md:col-span-1"><div className="text-[10px] font-black uppercase tracking-wider text-primary">Password</div><div className="mt-2 break-all rounded-lg bg-background px-3 py-2 font-mono text-sm font-black">{visible ? (e.password || "Password unavailable in this backup") : mask(e.password || "")}</div><Button className="mt-2 w-full" size="sm" onClick={()=>copy(e.password||"")}><Copy className="h-4 w-4"/> Copy password</Button></div>
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 md:col-span-1"><div className="text-[10px] font-black uppercase tracking-wider text-primary">Password</div><div className="mt-2 break-all rounded-lg bg-background px-3 py-2 font-mono text-sm font-black">{visible?e.password:mask(e.password)}</div><Button className="mt-2 w-full" size="sm" onClick={()=>copy(e.password||"")}><Copy className="h-4 w-4"/> Copy password</Button></div>
                 <div className="rounded-xl border border-border bg-muted/20 p-3"><div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">Export details</div><div className="mt-2 grid grid-cols-2 gap-2 text-xs"><div><div className="text-muted-foreground">Rows</div><div className="font-bold">{rowCount.toLocaleString()}</div></div><div><div className="text-muted-foreground">Size</div><div className="font-bold">{(bytes/1024).toFixed(1)} KB</div></div></div></div>
                 <div className="rounded-xl border border-border bg-muted/20 p-3 md:col-span-1"><div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">Saved location</div><div className="mt-2 break-all font-mono text-[11px] leading-5">{e.savedPath || "Browser-selected location"}</div></div>
               </div>

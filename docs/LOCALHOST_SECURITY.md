@@ -15,7 +15,7 @@ This prevents a dragged/copied `http://127.0.0.1:PORT/...` address opened in a n
 - New embedded webviews are blocked.
 - Production DevTools shortcuts are disabled.
 - Renderer filesystem debug reads are disabled in packaged builds and restricted to the export log in development.
-- Local server responses are marked `no-store` and include basic security headers.
+- Local server responses are marked `no-store` and include security headers plus a per-response CSP nonce for the inline TanStack Start bootstrap script.
 
 ## Important limitation
 
@@ -26,3 +26,7 @@ Raw municipal CBMS JSON files must remain outside the public source repository a
 ## Development mode
 
 `npm run dev` deliberately opens a normal Vite development server in a browser, so a browser address such as `http://127.0.0.1:8080/...` is expected and cannot be hidden. Use the packaged Electron application for the hardened runtime; it uses the protected per-launch localhost capability described above.
+
+## Startup behavior
+
+The packaged desktop application opens a small native startup surface that displays **Securing system…** while the local application server starts. The main window remains hidden until the document is available, preventing a blank/white intermediate window. The React security gate then shows first; only after the local authentication check completes does the PIN challenge or protected application mount.

@@ -1,68 +1,73 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 const releaseDir = path.resolve("release");
 const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+
 if (!fs.existsSync(releaseDir)) {
   throw new Error("release/ does not exist. Run the Windows release build first.");
 }
 
-const files = fs.readdirSync(releaseDir);
-const exe = files.find((name) => /\.exe$/i.test(name) && !/uninstaller/i.test(name));
-const yml = files.find((name) => name.toLowerCase() === "latest.yml");
-const blockmap = files.find((name) => /\.blockmap$/i.test(name));
+const version = pkg.version;
+const expectedExe = `CBMS-Insights-Setup-${version}.exe`;
+const expectedBlockmap = `${expectedExe}.blockmap`;
+const files = fs.readdirSync(releaseDir, { withFileTypes: true })
+  .filter((entry) => entry.isFile())
+  .map((entry) => entry.name);
 
-if (!exe) throw new Error("Missing Windows NSIS .exe installer.");
-if (!yml) throw new Error("Missing latest.yml updater metadata.");
-if (!blockmap) throw new Error("Missing Windows .blockmap updater metadata.");
+const installers = files.filter((name) => /^CBMS-Insights-Setup-.*\.exe$/i.test(name));
+if (installers.length !== 1) {
+  throw new Error(`Expected exactly one CBMS Insights installer in release/, found ${installers.length}: ${installers.join(", ") || "<none>"}`);
+}
 
-const ymlText = fs.readFileSync(path.join(releaseDir, yml), "utf8");
+const [exe] = installers;
+if (exe !== expectedExe) {
+  throw new Error(`Installer name ${exe} does not match package.json version ${version}. Expected ${expectedExe}.`);
+}
+
+if (!files.includes("latest.yml")) {
+  throw new Error("Missing latest.yml updater metadata.");
+}
+if (!files.includes(expectedBlockmap)) {
+  throw new Error(`Missing ${expectedBlockmap} updater blockmap.`);
+}
+
+const exeStats = fs.statSync(path.join(releaseDir, exe));
+const blockmapStats = fs.statSync(path.join(releaseDir, expectedBlockmap));
+if (exeStats.size < 1024 * 1024) {
+  throw new Error(`Installer ${exe} is unexpectedly small (${exeStats.size} bytes).`);
+}
+if (blockmapStats.size < 100) {
+  throw new Error(`Blockmap ${expectedBlockmap} is unexpectedly small (${blockmapStats.size} bytes).`);
+}
+
+const ymlText = fs.readFileSync(path.join(releaseDir, "latest.yml"), "utf8");
 const versionMatch = ymlText.match(/^version:\s*([^\s]+)\s*$/m);
-const manifestVersion = versionMatch?.[1]?.trim();
-if (manifestVersion !== pkg.version) {
-  throw new Error(`latest.yml version ${manifestVersion ?? "<missing>"} does not match package.json ${pkg.version}.`);
+if (versionMatch?.[1]?.trim() !== version) {
+  throw new Error(`latest.yml version ${versionMatch?.[1] ?? "<missing>"} does not match package.json ${version}.`);
 }
 
-// electron-builder 27+ emits modern `files:` metadata and may omit the
-// legacy top-level `path:` field. Older manifests can still contain `path:`.
-// Accept both formats and URL-decode artifact names before comparing.
-const candidateNames = new Set();
-for (const match of ymlText.matchAll(/^path:\s*["']?([^\n"']+?)["']?\s*$/gm)) {
-  candidateNames.add(match[1].trim());
+const referencedPaths = [];
+for (const match of ymlText.matchAll(/^(?:path|url):\s*["']?([^"'\r\n]+)["']?\s*$/gm)) {
+  referencedPaths.push(match[1].trim());
 }
-for (const match of ymlText.matchAll(/^\s*-?\s*url:\s*["']?([^\n"']+?)["']?\s*$/gm)) {
-  candidateNames.add(match[1].trim());
-}
-for (const match of ymlText.matchAll(/^\s*url:\s*["']?([^\n"']+?)["']?\s*$/gm)) {
-  candidateNames.add(match[1].trim());
-}
-
-const decodedCandidates = [...candidateNames].map((value) => {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
+const decodedPaths = referencedPaths.map((value) => {
+  try { return decodeURIComponent(value); } catch { return value; }
 });
-
-if (!decodedCandidates.includes(exe) && !candidateNames.has(exe)) {
-  throw new Error(
-    `latest.yml does not reference the generated installer ${exe}. ` +
-    `Manifest candidates: ${decodedCandidates.join(", ") || "<none>"}`
-  );
+if (!decodedPaths.includes(expectedExe)) {
+  throw new Error(`latest.yml does not reference ${expectedExe}. References: ${decodedPaths.join(", ") || "<none>"}`);
 }
 
-// Ensure the blockmap is the same release version when its filename carries a version.
-if (!new RegExp(`(?:^|[^0-9])${pkg.version.replaceAll(".", "\\.")}(?:[^0-9]|$)`).test(blockmap)) {
-  throw new Error(`Generated blockmap ${blockmap} does not appear to match release version ${pkg.version}.`);
+if (!/^sha512:\s*\S+/m.test(ymlText)) {
+  throw new Error("latest.yml is missing the installer SHA-512 metadata.");
 }
 
 console.log(JSON.stringify({
   ok: true,
-  version: pkg.version,
+  version,
   installer: exe,
-  metadata: yml,
-  blockmap,
-  manifestInstallerReferences: decodedCandidates,
+  installerBytes: exeStats.size,
+  blockmap: expectedBlockmap,
+  blockmapBytes: blockmapStats.size,
+  metadata: "latest.yml",
 }, null, 2));
