@@ -157,7 +157,7 @@ jobs:
           $expected | ForEach-Object { Write-Host " - $_" }
 
       - name: Upload release outputs as workflow artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: CBMS-Insights-Windows-${{ github.ref_name }}
           path: |
