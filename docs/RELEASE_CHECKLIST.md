@@ -26,7 +26,7 @@ tag = v1.4.16
 git add .
 git commit -m "Release v1.4.17"
 git push origin main
-git tag v1.4.7
+git tag v1.4.17
 git push origin v1.4.17
 ```
 
