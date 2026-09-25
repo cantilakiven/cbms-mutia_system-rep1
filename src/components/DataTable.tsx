@@ -33,6 +33,7 @@ export function DataTable<T extends Record<string, any>>({
     );
   }, [q, rows, columns]);
 
+  const recordCount = filtered.filter((r) => !(r as any)?._isTotalRow).length;
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const cur = Math.min(page, totalPages);
   const slice = filtered.slice((cur - 1) * pageSize, cur * pageSize);
@@ -153,8 +154,8 @@ export function DataTable<T extends Record<string, any>>({
 
       <footer className="flex flex-col gap-3 border-t border-border p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <div>
-          Showing <span className="font-semibold text-foreground">{slice.length}</span> of{" "}
-          <span className="font-semibold text-foreground">{filtered.length.toLocaleString()}</span> records
+          Showing <span className="font-semibold text-foreground">{Math.min(slice.length, recordCount)}</span> of{" "}
+          <span className="font-semibold text-foreground">{recordCount.toLocaleString()}</span> records
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="ghost" disabled={cur <= 1} onClick={() => setPage(cur - 1)}>Prev</Button>

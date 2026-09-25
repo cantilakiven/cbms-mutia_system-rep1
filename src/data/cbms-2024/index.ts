@@ -6,6 +6,7 @@
  * inside the Electron/Vite build.
  */
 import { convertLegacy2022, isLegacy2022Record } from "../cbms-legacy-2022";
+import { canonicalHouseholdKey, canonicalPersonKey } from "@/lib/record-keys";
 
 export type DataYear = 2022 | 2024;
 export const DATASET_KEYS = ["barangays", "barangayList", "households", "childMortality", "interviews", "persons", "personsTvet"] as const;
@@ -152,9 +153,38 @@ function classify(filename:string, sample:any): DatasetKey|null {
   return null;
 }
 
+function dedupeRecords(rows: any[], keyFn: (row: any) => string) {
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const row of rows) {
+    const key = keyFn(row);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
+function personRecordKey(row: any) {
+  return canonicalPersonKey(row);
+}
+
+function householdRecordKey(row: any) {
+  return canonicalHouseholdKey(row);
+}
+
 function normalize2024(rawByKey: Record<string,any[]>, namesByKey: Record<string,string[]>) : Datasets {
   const out=empty();
   for(const key of DATASET_KEYS) if(rawByKey[key]) out[key]=rawByKey[key];
+
+  // Normalize duplicate uploads before any report counts are calculated. This is
+  // important when an operator selects overlapping 2024 export files or repeats a
+  // folder import. Persons are keyed at person level; households at household level.
+  out.persons = dedupeRecords(out.persons, personRecordKey);
+  out.personsTvet = dedupeRecords(out.personsTvet, personRecordKey);
+  out.households = dedupeRecords(out.households, householdRecordKey);
+  out.interviews = dedupeRecords(out.interviews, (row) => String(row?.uuid || `${row?.area_code ?? ""}|${row?.husn ?? ""}|${row?.hsn ?? ""}|${row?.visit_number ?? ""}`));
+
   // Some exports provide barangay data only through persons/households.
   if(!out.barangays.length){ const seen=new Map(); for(const r of [...out.persons,...out.households]) if(r?.area_code&&!seen.has(r.area_code)) seen.set(r.area_code,{area_code:r.area_code,area_name:r.area_name,region_code:r.region_code,province_code:r.province_code,city_mun_code:r.city_mun_code,barangay_code:r.barangay_code}); out.barangays=[...seen.values()]; }
   return out;

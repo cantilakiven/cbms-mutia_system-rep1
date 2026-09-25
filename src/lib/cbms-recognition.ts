@@ -5,6 +5,7 @@
 
 import { datasets, subscribeData } from "@/data/cbms";
 import { fullName } from "./cbms-labels";
+import { canonicalPersonKey } from "./record-keys";
 
 export type RuleId =
   | "pwd"
@@ -217,7 +218,11 @@ export function getEnrichedPersons(): any[] {
       heads.set(`${p.area_code}-${p.husn}-${p.hsn}`, fullName(p));
     }
   }
-  _enriched = datasets.persons.map((p) => {
+  const unique = (() => {
+    const seen = new Set<string>();
+    return datasets.persons.filter((p) => { const key = canonicalPersonKey(p); if (!key || seen.has(key)) return false; seen.add(key); return true; });
+  })();
+  _enriched = unique.map((p) => {
     const hh = householdOf(p);
     return {
       ...p,
@@ -240,16 +245,7 @@ export function isMember(ruleId: RuleId, person: any): boolean {
 }
 
 function personIdentity(p: any): string {
-  const direct = String(p?.uuid || p?.id || "");
-  if (direct) return direct;
-
-  const area = String(p?.area_code ?? "");
-  const husn = String(p?.husn ?? "");
-  const hsn = String(p?.hsn ?? "");
-  const line = String(p?.line_number ?? "");
-  if (line) return `${area}-${husn}-${hsn}-${line}`;
-
-  return `${area}-${husn}-${hsn}|${p?._full_name ?? ""}|${p?.a05_age ?? ""}|${p?.a03_sex ?? ""}`;
+  return canonicalPersonKey(p);
 }
 
 export function listSector(ruleId: RuleId): any[] {

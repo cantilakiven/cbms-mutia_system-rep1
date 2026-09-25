@@ -91,6 +91,12 @@ const BookOpen = createLucideIcon("BookOpen", [
     }
   ]
 ]);
+const BriefcaseBusiness = createLucideIcon("BriefcaseBusiness", [
+  ["path", { d: "M12 12h.01", key: "1mp3jc" }],
+  ["path", { d: "M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2", key: "1ksdt3" }],
+  ["path", { d: "M22 13a18.15 18.15 0 0 1-20 0", key: "12hx5q" }],
+  ["rect", { width: "20", height: "14", x: "2", y: "6", rx: "2", key: "i6l2r4" }]
+]);
 const CalendarCheck2 = createLucideIcon("CalendarCheck2", [
   ["path", { d: "M8 2v4", key: "1cmpym" }],
   ["path", { d: "M16 2v4", key: "4m81vk" }],
@@ -126,6 +132,16 @@ const ChartColumn = createLucideIcon("ChartColumn", [
   ["path", { d: "M13 17V5", key: "1frdt8" }],
   ["path", { d: "M8 17v-3", key: "17ska0" }]
 ]);
+const ChartPie = createLucideIcon("ChartPie", [
+  [
+    "path",
+    {
+      d: "M21 12c.552 0 1.005-.449.95-.998a10 10 0 0 0-8.953-8.951c-.55-.055-.998.398-.998.95v8a1 1 0 0 0 1 1z",
+      key: "pzmjnu"
+    }
+  ],
+  ["path", { d: "M21.21 15.89A10 10 0 1 1 8 2.83", key: "k2fpak" }]
+]);
 const Check = createLucideIcon("Check", [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]]);
 const ChevronDown = createLucideIcon("ChevronDown", [
   ["path", { d: "m6 9 6 6 6-6", key: "qrunsl" }]
@@ -138,6 +154,20 @@ const CircleAlert = createLucideIcon("CircleAlert", [
 const CircleCheck = createLucideIcon("CircleCheck", [
   ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
   ["path", { d: "m9 12 2 2 4-4", key: "dzmm74" }]
+]);
+const ClipboardList = createLucideIcon("ClipboardList", [
+  ["rect", { width: "8", height: "4", x: "8", y: "2", rx: "1", ry: "1", key: "tgr4d6" }],
+  [
+    "path",
+    {
+      d: "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2",
+      key: "116196"
+    }
+  ],
+  ["path", { d: "M12 11h4", key: "1jrz19" }],
+  ["path", { d: "M12 16h4", key: "n85exb" }],
+  ["path", { d: "M8 11h.01", key: "1dfujw" }],
+  ["path", { d: "M8 16h.01", key: "18s6g9" }]
 ]);
 const Clipboard = createLucideIcon("Clipboard", [
   ["rect", { width: "8", height: "4", x: "8", y: "2", rx: "1", ry: "1", key: "tgr4d6" }],
@@ -262,6 +292,32 @@ const FileType2 = createLucideIcon("FileType2", [
   ["path", { d: "M2 13v-1h6v1", key: "1dh9dg" }],
   ["path", { d: "M5 12v6", key: "150t9c" }],
   ["path", { d: "M4 18h2", key: "1xrofg" }]
+]);
+const Fish = createLucideIcon("Fish", [
+  [
+    "path",
+    {
+      d: "M6.5 12c.94-3.46 4.94-6 8.5-6 3.56 0 6.06 2.54 7 6-.94 3.47-3.44 6-7 6s-7.56-2.53-8.5-6Z",
+      key: "15baut"
+    }
+  ],
+  ["path", { d: "M18 12v.5", key: "18hhni" }],
+  ["path", { d: "M16 17.93a9.77 9.77 0 0 1 0-11.86", key: "16dt7o" }],
+  [
+    "path",
+    {
+      d: "M7 10.67C7 8 5.58 5.97 2.73 5.5c-1 1.5-1 5 .23 6.5-1.24 1.5-1.24 5-.23 6.5C5.58 18.03 7 16 7 13.33",
+      key: "l9di03"
+    }
+  ],
+  [
+    "path",
+    { d: "M10.46 7.26C10.2 5.88 9.17 4.24 8 3h5.8a2 2 0 0 1 1.98 1.67l.23 1.4", key: "1kjonw" }
+  ],
+  [
+    "path",
+    { d: "m16.01 17.93-.23 1.4A2 2 0 0 1 13.8 21H9.5a5.96 5.96 0 0 0 1.49-3.98", key: "1zlm23" }
+  ]
 ]);
 const FolderOpen = createLucideIcon("FolderOpen", [
   [
@@ -489,6 +545,10 @@ const Trash2 = createLucideIcon("Trash2", [
   ["line", { x1: "10", x2: "10", y1: "11", y2: "17", key: "1uufr5" }],
   ["line", { x1: "14", x2: "14", y1: "11", y2: "17", key: "xtxkd" }]
 ]);
+const TrendingDown = createLucideIcon("TrendingDown", [
+  ["polyline", { points: "22 17 13.5 8.5 8.5 13.5 2 7", key: "1r2t7k" }],
+  ["polyline", { points: "16 17 22 17 22 11", key: "11uiuu" }]
+]);
 const TriangleAlert = createLucideIcon("TriangleAlert", [
   [
     "path",
@@ -524,6 +584,52 @@ const WalletCards = createLucideIcon("WalletCards", [
     {
       d: "M3 11h3c.8 0 1.6.3 2.1.9l1.1.9c1.6 1.6 4.1 1.6 5.7 0l1.1-.9c.5-.5 1.3-.9 2.1-.9H21",
       key: "1dpki6"
+    }
+  ]
+]);
+const Wheat = createLucideIcon("Wheat", [
+  ["path", { d: "M2 22 16 8", key: "60hf96" }],
+  [
+    "path",
+    {
+      d: "M3.47 12.53 5 11l1.53 1.53a3.5 3.5 0 0 1 0 4.94L5 19l-1.53-1.53a3.5 3.5 0 0 1 0-4.94Z",
+      key: "1rdhi6"
+    }
+  ],
+  [
+    "path",
+    {
+      d: "M7.47 8.53 9 7l1.53 1.53a3.5 3.5 0 0 1 0 4.94L9 15l-1.53-1.53a3.5 3.5 0 0 1 0-4.94Z",
+      key: "1sdzmb"
+    }
+  ],
+  [
+    "path",
+    {
+      d: "M11.47 4.53 13 3l1.53 1.53a3.5 3.5 0 0 1 0 4.94L13 11l-1.53-1.53a3.5 3.5 0 0 1 0-4.94Z",
+      key: "eoatbi"
+    }
+  ],
+  ["path", { d: "M20 2h2v2a4 4 0 0 1-4 4h-2V6a4 4 0 0 1 4-4Z", key: "19rau1" }],
+  [
+    "path",
+    {
+      d: "M11.47 17.47 13 19l-1.53 1.53a3.5 3.5 0 0 1-4.94 0L5 19l1.53-1.53a3.5 3.5 0 0 1 4.94 0Z",
+      key: "tc8ph9"
+    }
+  ],
+  [
+    "path",
+    {
+      d: "M15.47 13.47 17 15l-1.53 1.53a3.5 3.5 0 0 1-4.94 0L9 15l1.53-1.53a3.5 3.5 0 0 1 4.94 0Z",
+      key: "2m8kc5"
+    }
+  ],
+  [
+    "path",
+    {
+      d: "M19.47 9.47 21 11l-1.53 1.53a3.5 3.5 0 0 1-4.94 0L13 11l1.53-1.53a3.5 3.5 0 0 1 4.94 0Z",
+      key: "vex3ng"
     }
   ]
 ]);
@@ -567,8 +673,14 @@ export {
   FileJson as a3,
   Clock as a4,
   Layers3 as a5,
-  Info as a6,
-  Utensils as a7,
+  ChartPie as a6,
+  Wheat as a7,
+  Fish as a8,
+  BriefcaseBusiness as a9,
+  Info as aa,
+  TrendingDown as ab,
+  ClipboardList as ac,
+  Utensils as ad,
   ShieldAlert as b,
   Search as c,
   MapPin as d,

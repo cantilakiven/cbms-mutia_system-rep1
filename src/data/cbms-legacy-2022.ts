@@ -316,19 +316,41 @@ function makePerson(
 
   const occupationText = [source.E07_OCCUPATION, source.E35_LAST_OCCUPATION].map(str).filter(Boolean).join(" ");
   const industryText = [source.E09_KIND_OF_BUSINESS_OR_INDUSTRY, source.E37_LAST_INDUSTRY].map(str).filter(Boolean).join(" ");
+  // CBMS 2022 sector classification uses the agriculture/fishery engagement
+  // module itself. Do not infer farmer/fisherfolk membership from occupation
+  // text here; occupation is reported separately and may describe a person's
+  // job while the agriculture module captures the requested sector activity.
   const farmer =
-    code(g.G11_ENGAGED_IN_AGRI) === 1 ||
     code(g.G12_A_GROWING_OF_CROPS) === 1 ||
     code(g.G12_B_LIVESTOCK_AND_POULTRY) === 1 ||
     code(g.G13_TYPE_OF_ENGAGEMENT_IN_FARMING) !== null ||
-    /farm|farmer|farming|agri/i.test(occupationText) ||
-    /farm|farmer|farming|agri/i.test(industryText);
+    [
+      g.G14_A_DAY_TO_DAY_FARM_OPERATION,
+      g.G14_B_LAND_PREPARATION,
+      g.G14_C_PLANTING,
+      g.G14_D_CULTIVATION,
+      g.G14_E_HARVESTING,
+      g.G14_F_FEEDING,
+      g.G14_Z_OTHERS_FARM_PRODUCTION_ACTIVITY,
+    ].some((v) => code(v) === 1);
   const fisherfolk =
-    code(g.G15_ENGAGED_IN_AQUACULTURE) === 1 ||
-    code(g.G15_ENGAGED_IN_FISH_CAPTURE) === 1 ||
-    code(g.G15_ENGAGED_IN_GLEANING) === 1 ||
+    code(g.G12_C_AQUACULTURE) === 1 ||
     code(g.G12_D_FISH_CAPTURE) === 1 ||
-    code(g.G12_C_AQUACULTURE) === 1;
+    code(g.G12_E_GLEANING) === 1 ||
+    code(g.G15_TYPE_OF_ENGAGEMENT_IN_FISHERY) !== null ||
+    [
+      g.G16_A_DAY_TO_DAY_FISHERY_OPERATION,
+      g.G16_B_PREPARATION,
+      g.G16_C_STOCKING,
+      g.G16_D_FEEDING,
+      g.G16_E_WATER_MANAGEMENT,
+      g.G16_F_POND_MAINTENANCE,
+      g.G16_G_HARVESTING,
+      g.G16_H_MUNICIPAL_FISHING,
+      g.G16_I_GLEANING,
+      g.G16_J_COMMERCIAL_FISHING,
+      g.G16_Z_OTHERS_FISHERY_ACTIVITY,
+    ].some((v) => code(v) === 1);
 
   return {
     ...meta,
@@ -427,6 +449,9 @@ function makePerson(
     e16_willing_to_work: yesNo(source.E32_WILLING_TO_WORK),
     e17_farmer: farmer ? "Yes" : "No",
     e18_fisherfolk: fisherfolk ? "Yes" : "No",
+    // Preserve the complete Section G11–G27 row for this person so the UI can
+    // audit the exact 2022 agriculture/fishery fields used for classification.
+    legacy_agriculture_engagement: unwrapLegacy(g),
     m06_a_benefit_4ps: [p2Line.P06_A_4PS_REGULAR_RECEIVED_BENEFITS, p2Line.P06_B_4PS_MODIFIED_RECEIVED_BENEFITS].some((v) => code(v) === 1) ? "Yes" : "No",
     m06_b_benefit_socpen: code(p2Line.P06_D_SOCPEN_RECEIVED_BENEFITS) === 1 ? "Yes" : "No",
     legacy_occupation_text: occupationText || null,

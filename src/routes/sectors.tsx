@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { getActiveBarangay, getActiveYear, getAvailableBarangays, getYearDatasets, getPersonFullName, householdKey, getHouseholdIncome } from "@/data/cbms";
+import { getActiveBarangay, getActiveYear, getAvailableBarangays, getYearDatasets, getPersonFullName, householdKey, getHouseholdIncome, subscribeData, getDataVersion } from "@/data/cbms";
 import { getMealFrequency, isUnderThreeMeals } from "@/lib/food-frequency";
 import { DataTable } from "@/components/DataTable";
 import { PersonModal } from "@/components/CBMSModals";
@@ -12,7 +12,8 @@ import {
 import { verifySector, verifyGroups } from "@/lib/cbms-verify";
 import { Button } from "@/components/ui/button";
 import { exportDOCX, exportPDF, printPayload, type ExportColumn, type GroupedExportPayload } from "@/lib/cbms-export";
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, Download, Info, RotateCcw, Search, Utensils, ClipboardList, Printer } from "lucide-react";
+import { classifyPersonSector, buildHouseholdSectorMap, classifyHousehold, getSectorAccounting, percentage, uniquePersonRecords, uniqueHouseholdRecords } from "@/lib/cbms-sector-classification";
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, Download, Info, RotateCcw, Search, Utensils, ClipboardList, Printer, Users, Home, Wheat, Fish } from "lucide-react";
 
 type AggKind =
   | "pantawid_by_brgy"
@@ -30,7 +31,8 @@ type AggKind =
   | "food_under_three_by_brgy"
   | "food_frequency_daily_by_brgy"
   | "food_frequency_weekly_by_brgy"
-  | "skipped_meal_by_brgy";
+  | "skipped_meal_by_brgy"
+;
 
 const NS = "Not Stated";
 const txt = (v: any) => (v === null || v === undefined || String(v).trim() === "" ? NS : String(v).trim());
@@ -190,11 +192,11 @@ const isSocialPensioner = (p: any) =>
 const GENERIC_DEFS: GenericDef[] = [
   {
     id: "farmers_by_brgy",
-    label: "Farmers by Barangay",
-    title: "Farmers by Barangay",
-    subtitle: "Persons identified as farmers through the normalized 2022 agriculture indicators, occupation, or industry. Names are listed per barangay.",
+    label: "Farmers (Persons) by Barangay",
+    title: "Farmers (Persons) by Barangay",
+    subtitle: "Person-level farmer roster. Each unique person is counted once; household counts are shown separately in Sector Accounting.",
     mode: "flag",
-    match: (p) => yes(p.e17_farmer),
+    match: (p) => classifyPersonSector(p).farmer,
     countLabel: "Farmers",
     extra: [
       { key: "e17_farmer", label: "Farmer" },
@@ -334,15 +336,11 @@ const GENERIC_DEFS: GenericDef[] = [
   },
   {
     id: "fisherfolk_by_brgy",
-    label: "Fisherfolk by Barangay",
-    title: "Fisherfolk by Barangay",
-    subtitle: "Persons flagged as fisherfolk (e18_fisherfolk = Yes) or with fishing occupation/industry.",
+    label: "Fisherfolk (Persons) by Barangay",
+    title: "Fisherfolk (Persons) by Barangay",
+    subtitle: "Person-level fisherfolk roster. Each unique person is counted once; household counts are shown separately in Sector Accounting.",
     mode: "flag",
-    match: (p) => {
-      const occupation = [p.e05_psoc, p.e05_occupation_group, p.legacy_occupation_text].map(low).join(" ");
-      const industry = [p.e06_psic, p.e06_industry_group, p.legacy_industry_text].map(low).join(" ");
-      return yes(p.e18_fisherfolk) || occupation.includes("fisher") || industry.includes("fishing") || industry.includes("fish capture");
-    },
+    match: (p) => classifyPersonSector(p).fisherfolk,
     countLabel: "Fisherfolk",
     extra: [
       { key: "e18_fisherfolk", label: "Fisherfolk" },
@@ -469,6 +467,8 @@ const AGG_KINDS: AggKind[] = [
   "agri_employment_by_brgy",
   "agri_income_by_brgy",
   "farming_reported_income_by_brgy",
+  "sector_accounting_by_brgy",
+  "fisherfolk_household_by_brgy",
 ];
 
 const SECTOR_TABS: { id: TabId; label: string }[] = [
@@ -477,11 +477,13 @@ const SECTOR_TABS: { id: TabId; label: string }[] = [
   { id: "persons_income_by_brgy", label: "Persons by Household Income" },
   { id: "food_under_three_by_brgy", label: "Households Eating Less Than 3 Meals a Day" },
   { id: "skipped_meal_by_brgy", label: "Households That Skipped a Meal" },
-  { id: "farming_household_by_brgy", label: "Farming & Non-Farming Households by Barangay" },
-  { id: "farming_poverty_by_brgy", label: "Farming Household Poverty / Low-Income by Barangay" },
-  { id: "agri_employment_by_brgy", label: "Agricultural vs Non-Agricultural Employment by Barangay" },
-  { id: "agri_income_by_brgy", label: "Agricultural Household Income by Barangay" },
-  { id: "farming_reported_income_by_brgy", label: "Farming Households with Reported Income by Barangay" },
+  { id: "sector_accounting_by_brgy", label: "01 · Sector Accounting — Household vs Persons" },
+  { id: "farming_household_by_brgy", label: "02 · Farming Households — Household Heads" },
+  { id: "fisherfolk_household_by_brgy", label: "03 · Fisherfolk Households — Household Heads" },
+  { id: "farming_poverty_by_brgy", label: "04 · Farming Household Poverty / Low-Income by Barangay" },
+  { id: "agri_employment_by_brgy", label: "05 · Agricultural vs Non-Agricultural Employment by Barangay" },
+  { id: "agri_income_by_brgy", label: "06 · Agricultural Household Income by Barangay" },
+  { id: "farming_reported_income_by_brgy", label: "07 · Farming Households with Reported Income by Barangay" },
   { id: "pantawid_by_brgy", label: "Pantawid (4Ps) by Barangay" },
   { id: "non_pantawid_by_brgy", label: "Non-Pantawid by Barangay" },
   { id: "employed_by_brgy", label: "Employed by Barangay" },
@@ -518,11 +520,12 @@ function useRuleVersion() {
 function SectorsPage() {
   const { tab } = Route.useSearch();
   const navigate = Route.useNavigate();
+  const dataVersion = useSyncExternalStore(subscribeData, getDataVersion, () => 0);
   useRuleVersion();
   const [brgy, setBrgy] = useState<string>("");
   const [tabSearch, setTabSearch] = useState("");
   const year = getActiveYear();
-  const activeBarangays = useMemo(() => getAvailableBarangays(year).map((b) => b.area_name), [year]);
+  const activeBarangays = useMemo(() => getAvailableBarangays(year).map((b) => b.area_name), [year, dataVersion]);
   const [selected, setSelected] = useState<any | null>(null);
 
   const filteredTabs = useMemo(() => {
@@ -587,7 +590,7 @@ function SectorsPage() {
                   const currentId = String(activeTab);
                   const groupFor = (id: string) =>
                     /^(pwd|fourps|not_fourps|pantawid|non_pantawid|senior|solo|socpen|.*income|.*pwd|food_frequency|skipped_meal)/.test(id) ? "priority" :
-                    /^(farming_|agri_)/.test(id) ? "agriculture" :
+                    /^(sector_accounting|fisherfolk_household|farming_|agri_)/.test(id) ? "agriculture" :
                     /^(employed|unemployed|in_lf|not_in_lf|farmers|coconut|fisher|basis_of_payment|class_of_worker)/.test(id) ? "livelihood" :
                     /^(edu_|early_childhood)/.test(id) ? "education" : "priority";
                   const [firstGroup] = groups;
@@ -626,7 +629,7 @@ function SectorsPage() {
             {(() => {
               const groupFor = (id: string) =>
                 /^(pwd|fourps|not_fourps|pantawid|non_pantawid|senior|solo|socpen|.*income|.*pwd|food_frequency|skipped_meal)/.test(id) ? "priority" :
-                    /^(farming_|agri_)/.test(id) ? "agriculture" :
+                    /^(sector_accounting|fisherfolk_household|farming_|agri_)/.test(id) ? "agriculture" :
                 /^(employed|unemployed|in_lf|not_in_lf|farmers|coconut|fisher|basis_of_payment|class_of_worker)/.test(id) ? "livelihood" :
                 /^(edu_|early_childhood)/.test(id) ? "education" : "priority";
               const currentGroup = groupFor(String(activeTab));
@@ -705,8 +708,12 @@ function SectorsPage() {
         </div>
       </section>
 
-      {activeTab === "farming_household_by_brgy" ? (
+      {activeTab === "sector_accounting_by_brgy" ? (
+        <SectorAccountingByBarangay />
+      ) : activeTab === "farming_household_by_brgy" ? (
         <AgricultureByBarangay mode="farming_households" onSelect={setSelected} />
+      ) : activeTab === "fisherfolk_household_by_brgy" ? (
+        <AgricultureByBarangay mode="fisherfolk_households" onSelect={setSelected} />
       ) : activeTab === "farming_poverty_by_brgy" ? (
         <AgricultureByBarangay mode="farming_poverty" onSelect={setSelected} />
       ) : activeTab === "agri_employment_by_brgy" ? (
@@ -736,6 +743,209 @@ function SectorsPage() {
       )}
 
       <PersonModal person={selected} onClose={() => setSelected(null)} />
+    </div>
+  );
+}
+
+function SectorAccountingByBarangay() {
+  const year = getActiveYear();
+  const ds = getYearDatasets(year);
+  const accounting = getSectorAccounting(year, ds.households, ds.persons);
+  const personFlags = buildHouseholdSectorMap(accounting.uniquePersons);
+  const rows = accounting.uniqueHouseholds.reduce((map: Map<string, any>, household: any) => {
+    const barangay = household.area_name || "Not Stated";
+    const c = classifyHousehold(household, personFlags);
+    const row = map.get(barangay) || {
+      barangay,
+      households: 0,
+      farming_households: 0,
+      fisherfolk_households: 0,
+      farming_only: 0,
+      fisherfolk_only: 0,
+      mixed_households: 0,
+      neither_households: 0,
+      persons: 0,
+      farmers: 0,
+      fisherfolk: 0,
+      mixed_persons: 0,
+    };
+    row.households += 1;
+    if (c.farmer) row.farming_households += 1;
+    if (c.fisherfolk) row.fisherfolk_households += 1;
+    if (c.farmingOnly) row.farming_only += 1;
+    if (c.fisherfolkOnly) row.fisherfolk_only += 1;
+    if (c.mixed) row.mixed_households += 1;
+    if (c.neither) row.neither_households += 1;
+    map.set(barangay,row);
+    return map;
+  }, new Map<string,any>());
+  const personMap = new Map<string, any>();
+  for (const p of accounting.uniquePersons) {
+    const b = p.area_name || "Not Stated";
+    const row = personMap.get(b) || { persons: 0, farmers: 0, fisherfolk: 0, mixed_persons: 0 };
+    const c = classifyPersonSector(p);
+    row.persons += 1;
+    if (c.farmer) row.farmers += 1;
+    if (c.fisherfolk) row.fisherfolk += 1;
+    if (c.farmer && c.fisherfolk) row.mixed_persons += 1;
+    personMap.set(b,row);
+  }
+  const householdKeySet = new Set(accounting.uniqueHouseholds.map((h:any) => householdKey(h)));
+  const allBarangays = new Set<string>([...rows.keys(), ...personMap.keys(), ...getSectorBarangays(year)]);
+  const finalRows = [...allBarangays].map((barangay) => {
+    const householdRow = rows.get(barangay) || { barangay, households: 0, farming_households: 0, fisherfolk_households: 0, farming_only: 0, fisherfolk_only: 0, mixed_households: 0, neither_households: 0 };
+    const personRow = personMap.get(barangay) || { persons: 0, farmers: 0, fisherfolk: 0, mixed_persons: 0 };
+    const personHouseholdKeys = new Set(accounting.uniquePersons.filter((p:any) => (p.area_name || "Not Stated") === barangay).map((p:any) => householdKey(p)).filter((k:string) => k && k !== "--"));
+    const unmatched = [...personHouseholdKeys].filter((k) => !householdKeySet.has(k)).length;
+    return {
+      ...householdRow,
+      ...personRow,
+      unmatched_person_households: unmatched,
+      farming_household_share: percentage(householdRow.farming_households, householdRow.households),
+      fisherfolk_household_share: percentage(householdRow.fisherfolk_households, householdRow.households),
+      farmer_person_share: percentage(personRow.farmers, personRow.persons),
+      fisherfolk_person_share: percentage(personRow.fisherfolk, personRow.persons),
+    };
+  }).sort((a,b)=>String(a.barangay).localeCompare(String(b.barangay),undefined,{numeric:true,sensitivity:"base"}));
+
+  const householdReconciles = accounting.household.exclusiveSum === accounting.household.total;
+  const personUnion = accounting.person.agricultureFishery;
+  const totalRow = {
+    barangay: "TOTAL",
+    _isTotalRow: true,
+    households: accounting.household.total,
+    farming_households: accounting.household.farming,
+    fisherfolk_households: accounting.household.fisherfolk,
+    farming_only: accounting.household.farmingOnly,
+    fisherfolk_only: accounting.household.fisherfolkOnly,
+    mixed_households: accounting.household.mixed,
+    neither_households: accounting.household.neither,
+    persons: accounting.person.total,
+    farmers: accounting.person.farmers,
+    fisherfolk: accounting.person.fisherfolk,
+    mixed_persons: accounting.person.mixed,
+    farming_household_share: percentage(accounting.household.farming, accounting.household.total),
+    fisherfolk_household_share: percentage(accounting.household.fisherfolk, accounting.household.total),
+    farmer_person_share: percentage(accounting.person.farmers, accounting.person.total),
+    fisherfolk_person_share: percentage(accounting.person.fisherfolk, accounting.person.total),
+    unmatched_person_households: accounting.household.withoutHouseholdRecord,
+    person_derived_farming_households: accounting.household.personDerivedFarmingKeys,
+    person_derived_fisherfolk_households: accounting.household.personDerivedFisherfolkKeys,
+  };
+
+  return (
+    <div className="space-y-5">
+      <section className="rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-card)]">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-primary"><ClipboardList className="h-4 w-4" /> Sector accounting</div>
+            <h2 className="mt-1 font-display text-xl font-black">Household counts and person counts are separated</h2>
+            <p className="mt-1 max-w-4xl text-xs leading-5 text-muted-foreground">This audit view intentionally uses different denominators. Household figures count unique households. Person figures count unique persons. They are not expected to match and should not be added together.</p>
+          </div>
+          <div className={`rounded-lg border px-3 py-2 text-[10px] ${householdReconciles ? "border-success/30 bg-success/10 text-success-foreground" : "border-destructive/30 bg-destructive/10"}`}>
+            {householdReconciles ? "Reconciliation PASS" : "Reconciliation CHECK REQUIRED"}<br />
+            Exclusive household categories: {accounting.household.exclusiveSum.toLocaleString()} / {accounting.household.total.toLocaleString()}
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-muted/20 p-5">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <div className="min-w-0">
+            <h3 className="font-display text-base font-bold">How to read the sector counts</h3>
+            <p className="mt-1 text-[10px] leading-5 text-muted-foreground">A household count asks how many unique households have at least one linked person classified in the sector. A person count asks how many unique people are classified in the sector. One household can contain several sector persons, so the two values should not be expected to match.</p>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <SectorMetricRow label="Farmers per farming household" value={accounting.household.farming ? (accounting.person.farmers / accounting.household.farming).toFixed(2) : "—"} formula="farmer persons ÷ farming households" />
+          <SectorMetricRow label="Fisherfolk per fisherfolk household" value={accounting.household.fisherfolk ? (accounting.person.fisherfolk / accounting.household.fisherfolk).toFixed(2) : "—"} formula="fisherfolk persons ÷ fisherfolk households" />
+          <SectorMetricRow label="Household keys linked to persons" value={accounting.household.linkedToPersons.toLocaleString()} formula="unique household keys present in both household and person records" />
+          <SectorMetricRow label="Person-linked HH keys without household record" value={accounting.household.withoutHouseholdRecord.toLocaleString()} formula="person household keys not found in the household dataset" />
+          <SectorMetricRow label="Person-derived farming HH keys" value={accounting.household.personDerivedFarmingKeys.toLocaleString()} formula="unique household keys with at least one person classified as farmer" />
+          <SectorMetricRow label="Person-derived fisherfolk HH keys" value={accounting.household.personDerivedFisherfolkKeys.toLocaleString()} formula="unique household keys with at least one person classified as fisherfolk" />
+        </div>
+        <div className="mt-3 rounded-xl border border-border/70 bg-background p-3 text-[10px] leading-4 text-muted-foreground"><span className="font-bold text-foreground">Reconciliation:</span> farming-only + fisherfolk-only + mixed + neither must equal total households. Farmer persons + fisherfolk persons − persons flagged as both gives the unique agriculture/fishery person union. <span className="font-bold text-foreground">Do not add household counts to person counts.</span></div>
+      </section>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-card)]">
+          <div className="flex items-center gap-2"><Home className="h-5 w-5 text-primary" /><div><h3 className="font-display text-base font-bold">Household-based sector counts</h3><p className="text-[10px] text-muted-foreground">One household = one count, based on unique area + HUSN + HSN.</p></div></div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <SectorMetricRow label="Total households" value={accounting.household.total.toLocaleString()} />
+            <SectorMetricRow label="Farming households" value={accounting.household.farming.toLocaleString()} pct={`${(percentage(accounting.household.farming,accounting.household.total) ?? 0).toFixed(2)}%`} formula={`${accounting.household.farming.toLocaleString()} ÷ ${accounting.household.total.toLocaleString()} × 100`} />
+            <SectorMetricRow label="Fisherfolk households" value={accounting.household.fisherfolk.toLocaleString()} pct={`${(percentage(accounting.household.fisherfolk,accounting.household.total) ?? 0).toFixed(2)}%`} formula={`${accounting.household.fisherfolk.toLocaleString()} ÷ ${accounting.household.total.toLocaleString()} × 100`} />
+            <SectorMetricRow label="Farming-only households" value={accounting.household.farmingOnly.toLocaleString()} />
+            <SectorMetricRow label="Fisherfolk-only households" value={accounting.household.fisherfolkOnly.toLocaleString()} />
+            <SectorMetricRow label="Mixed farming + fisherfolk" value={accounting.household.mixed.toLocaleString()} />
+            <SectorMetricRow label="Neither farming nor fisherfolk" value={accounting.household.neither.toLocaleString()} />
+            <SectorMetricRow label="Exclusive category check" value={`${accounting.household.exclusiveSum.toLocaleString()} / ${accounting.household.total.toLocaleString()}`} formula="farming-only + fisherfolk-only + mixed + neither ÷ total households" />
+          </div>
+          <div className="mt-3 rounded-xl border border-border/70 bg-muted/20 p-3 text-[10px] leading-4 text-muted-foreground">Important: Farming households and fisherfolk households can overlap. The four exclusive categories above reconcile to total households.</div>
+        </section>
+
+        <section className="rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-card)]">
+          <div className="flex items-center gap-2"><Users className="h-5 w-5 text-primary" /><div><h3 className="font-display text-base font-bold">Person-based sector counts</h3><p className="text-[10px] text-muted-foreground">One unique person = one count. Farmer and fisherfolk flags may overlap.</p></div></div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <SectorMetricRow label="Total persons" value={accounting.person.total.toLocaleString()} />
+            <SectorMetricRow label="Farmers" value={accounting.person.farmers.toLocaleString()} pct={`${(percentage(accounting.person.farmers,accounting.person.total) ?? 0).toFixed(2)}%`} formula={`${accounting.person.farmers.toLocaleString()} ÷ ${accounting.person.total.toLocaleString()} × 100`} />
+            <SectorMetricRow label="Fisherfolk" value={accounting.person.fisherfolk.toLocaleString()} pct={`${(percentage(accounting.person.fisherfolk,accounting.person.total) ?? 0).toFixed(2)}%`} formula={`${accounting.person.fisherfolk.toLocaleString()} ÷ ${accounting.person.total.toLocaleString()} × 100`} />
+            <SectorMetricRow label="Both farmer + fisherfolk" value={accounting.person.mixed.toLocaleString()} />
+            <SectorMetricRow label="Agriculture/fishery union" value={personUnion.toLocaleString()} />
+            <SectorMetricRow label="Neither sector flag" value={accounting.person.neither.toLocaleString()} />
+            <SectorMetricRow label="Unique agri/fishery persons" value={personUnion.toLocaleString()} formula="farmers + fisherfolk − persons flagged both" />
+          </div>
+          <div className="mt-3 rounded-xl border border-border/70 bg-muted/20 p-3 text-[10px] leading-4 text-muted-foreground">A person counted as both appears in both the Farmer and Fisherfolk columns. The union count subtracts the overlap once.</div>
+        </section>
+      </div>
+
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-[10px] leading-5 text-muted-foreground"><span className="font-bold text-foreground">Audit order:</span> use the TOTAL row first, then the household roster (one row = one household), then the person rosters (one row = one person). The “person-derived household keys” columns are cross-checks only and are not added to the explicit household total.</div>
+
+      <DataTable
+        title={`Sector accounting by barangay — CBMS ${year}`}
+        subtitle="Household counts and person counts are separate measures. Household % uses households as denominator; person % uses persons as denominator."
+        rows={[...finalRows, totalRow]}
+        columns={[
+          { key: "barangay", label: "Barangay" },
+          { key: "households", label: "Households" },
+          { key: "farming_households", label: "Farming HH (households)" },
+          { key: "fisherfolk_households", label: "Fisherfolk HH (households)" },
+          { key: "farming_only", label: "Farming-only HH" },
+          { key: "fisherfolk_only", label: "Fisherfolk-only HH" },
+          { key: "mixed_households", label: "Mixed HH" },
+          { key: "persons", label: "Persons (people)" },
+          { key: "farmers", label: "Farmers (people)" },
+          { key: "fisherfolk", label: "Fisherfolk (people)" },
+          { key: "mixed_persons", label: "Mixed persons" },
+          { key: "farming_household_share", label: "Farming HH %" },
+          { key: "fisherfolk_household_share", label: "Fisherfolk HH %" },
+          { key: "farmer_person_share", label: "Farmer persons %" },
+          { key: "fisherfolk_person_share", label: "Fisherfolk persons %" },
+          { key: "unmatched_person_households", label: "Unmatched person HH keys" },
+          { key: "person_derived_farming_households", label: "Person-derived Farming HH keys" },
+          { key: "person_derived_fisherfolk_households", label: "Person-derived Fisherfolk HH keys" },
+        ] as any}
+        searchable
+        pageSize={50}
+      />
+
+      <div className="rounded-2xl border border-border bg-muted/25 p-4 text-[10px] leading-4 text-muted-foreground">
+        <div className="font-bold text-foreground">How the sector classification is audited</div>
+        <div className="mt-1">CBMS 2024 uses the explicit e17_farmer and e18_fisherfolk Yes/No person fields. CBMS 2022 uses the agricultural/fishery engagement fields carried through the 2022 HPQ import adapter. Free-text occupation/industry descriptions do not override an explicit sector classification.</div>
+        <div className="mt-2">If “Unmatched person HH keys” is greater than zero, the person-derived cross-check is showing households represented in person records but not in the explicit household dataset. Those keys are not silently added to the explicit household total.</div>
+        <div className="mt-2">Use the TOTAL row to reconcile each unit: household categories reconcile to explicit household records; person categories reconcile to unique person records; person-derived household keys are an audit cross-check only.</div>
+        <div className="mt-2">Unmatched person household keys remain visible for investigation, but they are excluded from the explicit-household denominator until the corresponding household record is present.</div>
+      </div>
+    </div>
+  );
+}
+
+function SectorMetricRow({ label, value, pct, formula }: { label: string; value: string; pct?: string; formula?: string }) {
+  return (
+    <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
+      <div className="text-[10px] font-semibold leading-4 text-muted-foreground">{label}</div>
+      <div className="mt-1 flex items-baseline justify-between gap-2"><span className="text-lg font-black">{value}</span>{pct ? <span className="text-[10px] font-bold text-primary">{pct}</span> : null}</div>
+      {formula ? <div className="mt-1 text-[9px] leading-4 text-muted-foreground">How: {formula}</div> : null}
     </div>
   );
 }
@@ -787,7 +997,7 @@ function RosterView({
 
   const summary = useMemo(() => {
     if (tab !== "fourps" && tab !== "not_fourps" && tab !== "food_stamp") return undefined;
-    const all = getEnrichedPersons();
+    const all = uniquePersonRecords(getEnrichedPersons());
     const headsInScope = all.filter((p: any) => isHead(p) && (!brgy || p.area_name === brgy));
     const dedupe = (arr: any[]) => {
       const seen = new Set<string>();
@@ -817,7 +1027,7 @@ function RosterView({
   }, [tab, brgy]);
 
   const rosterSummary = useMemo<SectorSummaryItem[]>(() => {
-    const all = getEnrichedPersons();
+    const all = uniquePersonRecords(getEnrichedPersons());
     const scoped = all.filter((p: any) => !brgy || p.area_name === brgy);
     const headBased = tab === "fourps" || tab === "not_fourps" || tab === "food_stamp";
     const population = headBased
@@ -904,7 +1114,7 @@ function AggregateByBarangay({ kind }: { kind: AggKind }) {
     : null;
 
   const result = useMemo(() => {
-    const all = getEnrichedPersons();
+    const all = uniquePersonRecords(getEnrichedPersons());
     const NOT_STATED = "Not Stated";
 
     type PersonRow = Record<string, any>;
@@ -1588,29 +1798,32 @@ function VerifyResultCard({ result }: { result: ReturnType<typeof verifySector> 
 }
 
 
-const AGRI_WORK_RE = /\b(farm|farmer|farming|agri|agricultur|crop|rice|corn|coconut|sugar|livestock|poultry|forestry|plantation|nursery|hatchery)\b/i;
 const isAgriculturalWork = (p: any) => {
-  if (yes(p?.e17_farmer)) return true;
-  const occupation = [p?.e05_occupation_group, p?.legacy_occupation_text, p?.e05_psoc].map(low).join(" ");
-  const industry = [p?.e06_industry_group, p?.legacy_industry_text, p?.e06_psic].map(low).join(" ");
-  return AGRI_WORK_RE.test(occupation) || AGRI_WORK_RE.test(industry);
+  const c = classifyPersonSector(p);
+  return c.farmer || c.fisherfolk;
 };
+const isFarmerPerson = (p: any) => classifyPersonSector(p).farmer;
+const isFisherfolkPerson = (p: any) => classifyPersonSector(p).fisherfolk;
 const isEmployed = (p: any) => {
   const v = low(p?.e01_employment_status);
   return v === "employed" || (v.includes("employed") && !v.includes("unemployed") && !v.includes("not employed"));
 };
-const householdIsFarming = (persons: any[], key: string) => persons.some((p) => householdKey(p) === key && isAgriculturalWork(p));
+const householdSectorFlags = (persons: any[]) => buildHouseholdSectorMap(persons);
+const householdIsFarming = (persons: any[], key: string) => persons.some((p) => householdKey(p) === key && isFarmerPerson(p));
+const householdIsFisherfolk = (persons: any[], key: string) => persons.some((p) => householdKey(p) === key && isFisherfolkPerson(p));
 const agricultureSource = (persons: any[], key: string) => {
   const p = persons.find((row) => householdKey(row) === key && isAgriculturalWork(row));
   if (!p) return "Not Stated";
-  return String(p.e06_industry_group || p.e05_occupation_group || p.legacy_industry_text || p.legacy_occupation_text || "Agricultural livelihood").trim() || "Agricultural livelihood";
+  const c = classifyPersonSector(p);
+  const labels = [c.farmer ? "Farmer" : "", c.fisherfolk ? "Fisherfolk" : ""].filter(Boolean);
+  const activity = String(p.e06_industry_group || p.e05_occupation_group || p.legacy_industry_text || p.legacy_occupation_text || "").trim();
+  return [labels.join(" + "), activity].filter(Boolean).join(" — ") || "Agriculture/fishery engagement";
 };
 const agricultureActivity = (p: any) => {
-  const raw = p?.legacy_raw || {};
+  const raw = p?.legacy_agriculture_engagement || {};
   const text = [
     p?.e05_occupation_group, p?.legacy_occupation_text, p?.e05_psoc,
     p?.e06_industry_group, p?.legacy_industry_text, p?.e06_psic,
-    raw?.E07_OCCUPATION, raw?.E09_KIND_OF_BUSINESS_OR_INDUSTRY,
   ].map(low).join(" ");
   if (text.includes("coconut")) return "Coconut farmer / coconut production";
   if (text.includes("rice")) return "Rice farming";
@@ -1620,18 +1833,17 @@ const agricultureActivity = (p: any) => {
   if (text.includes("poultry") || text.includes("chicken") || text.includes("hatchery")) return "Poultry farming";
   if (text.includes("aquaculture") || text.includes("fishpond") || text.includes("fish farm")) return "Aquaculture";
   if (text.includes("forestry") || text.includes("logging")) return "Forestry";
-  const g11 = raw?.G11_ENGAGED_IN_AGRI;
-  const g12a = raw?.G12_A_GROWING_OF_CROPS;
-  const g12b = raw?.G12_B_LIVESTOCK_AND_POULTRY;
-  const g13 = raw?.G13_TYPE_OF_ENGAGEMENT_IN_FARMING;
-  if (yes(g11) || yes(g12a)) return "Crop / agricultural farming";
-  if (yes(g12b)) return "Livestock / poultry farming";
-  if (g13 !== undefined && g13 !== null && String(g13).trim() !== "") return `Farming engagement (CBMS field: ${String(g13)})`;
-  return yes(p?.e17_farmer) ? "Farmer / agricultural activity" : "Agricultural livelihood";
+  if (raw.G12_D_FISH_CAPTURE === 1) return "Fish capture";
+  if (raw.G12_E_GLEANING === 1) return "Gleaning / shell gathering";
+  if (raw.G12_C_AQUACULTURE === 1) return "Aquaculture";
+  if (raw.G12_A_GROWING_OF_CROPS === 1) return "Growing of crops";
+  if (raw.G12_B_LIVESTOCK_AND_POULTRY === 1) return "Livestock / poultry raising";
+  const c = classifyPersonSector(p);
+  return c.farmer && c.fisherfolk ? "Agriculture and fishery engagement" : c.farmer ? "Farming / agricultural engagement" : c.fisherfolk ? "Fishery engagement" : "Not classified";
 };
 
 const farmingPersonOccupation = (persons: any[], key: string) => {
-  const p = persons.find((row) => householdKey(row) === key && isAgriculturalWork(row));
+  const p = persons.find((row) => householdKey(row) === key && isFarmerPerson(row));
   if (!p) return { occupation: "Not Stated", industry: "Not Stated" };
   return {
     occupation: String(p.e05_occupation_group || p.legacy_occupation_text || "Not Stated").trim() || "Not Stated",
@@ -1639,33 +1851,37 @@ const farmingPersonOccupation = (persons: any[], key: string) => {
   };
 };
 
-type AgricultureMode = "farming_households" | "farming_poverty" | "agri_employment" | "agri_income" | "farming_reported_income";
+type AgricultureMode = "farming_households" | "fisherfolk_households" | "farming_poverty" | "agri_employment" | "agri_income" | "farming_reported_income";
 
 function AgricultureByBarangay({ mode, onSelect }: { mode: AgricultureMode; onSelect: (p: any) => void }) {
   const year = getActiveYear();
   const ds = getYearDatasets(year);
   const barangays = getSectorBarangays(year);
+  const persons = useMemo(() => uniquePersonRecords(ds.persons), [ds.persons, year]);
+  const households = useMemo(() => uniqueHouseholdRecords(ds.households), [ds.households, year]);
   const personByHousehold = useMemo(() => {
     const m = new Map<string, any[]>();
-    for (const p of ds.persons) {
+    for (const p of persons) {
       const key = householdKey(p);
       if (!m.has(key)) m.set(key, []);
       m.get(key)!.push(p);
     }
     return m;
-  }, [ds.persons, year]);
+  }, [persons]);
+  const sectorFlags = useMemo(() => householdSectorFlags(persons), [persons]);
   const householdInfo = useMemo(() => {
-    const m = new Map<string, { household: any; farming: boolean; income: number | null; head: any | null; source: string }>();
-    for (const h of ds.households) {
+    const m = new Map<string, { household: any; farming: boolean; fisherfolk: boolean; income: number | null; head: any | null; source: string }>();
+    for (const h of households) {
       const key = householdKey(h);
       const people = personByHousehold.get(key) || [];
       const head = people.find((p) => isHead(p)) || people[0] || null;
       const rawIncome = getHouseholdIncome(h);
       const income = rawIncome !== null && Number.isFinite(Number(rawIncome)) ? Number(rawIncome) : null;
-      m.set(key, { household: h, farming: householdIsFarming(people, key), income, head, source: agricultureSource(people, key) });
+      const flags = sectorFlags.get(key) || { farmer: false, fisherfolk: false };
+      m.set(key, { household: h, farming: flags.farmer, fisherfolk: flags.fisherfolk, income, head, source: agricultureSource(people, key) });
     }
     return m;
-  }, [ds.households, personByHousehold]);
+  }, [households, personByHousehold, sectorFlags]);
 
   const model = useMemo(() => {
     const groups = new Map<string, any[]>();
@@ -1673,56 +1889,109 @@ function AgricultureByBarangay({ mode, onSelect }: { mode: AgricultureMode; onSe
     const byBarangaySummary: any[] = [];
     const add = (b: string, row: any) => { if (!groups.has(b)) groups.set(b, []); groups.get(b)!.push(row); };
 
-    if (mode === "farming_households") {
-      const allHouseholds = ds.households;
-      const farmingHouseholds = allHouseholds.filter((h) => householdInfo.get(hhKeySafe(h))?.farming);
-      const farmingHouseholdKeys = new Set(farmingHouseholds.map((h) => householdKey(h)));
-      const peopleRows = ds.persons.map((p) => {
-        const key = householdKey(p); const info = householdInfo.get(key); const farming = Boolean(info?.farming);
-        return { ...p, _full_name: getPersonFullName(p) || "Not Stated", livelihood: farming ? "Farming Household" : "Non-Farming Household", _household_head: info?.head ? getPersonFullName(info.head) : "Not Stated" };
+    if (mode === "farming_households" || mode === "fisherfolk_households") {
+      const targetFarming = mode === "farming_households";
+      const allHouseholds = households;
+      const selectedHouseholds = allHouseholds.filter((h) => {
+        const info = householdInfo.get(hhKeySafe(h));
+        return targetFarming ? Boolean(info?.farming) : Boolean(info?.fisherfolk);
       });
-      for (const row of peopleRows) add(row.area_name || "Not Stated", row);
-      const farmingPop = peopleRows.filter((p) => farmingHouseholdKeys.has(householdKey(p))).length;
-      const totalPop = peopleRows.length;
-      const farmingCount = farmingHouseholds.length;
-      const totalHh = allHouseholds.length;
-      const summary = [
-        { label: "Farming Households", value: farmingCount, percentage: totalHh ? shareOf(farmingCount, totalHh) : null, percentageLabel: "Farming households ÷ total households" },
-        { label: "Non-Farming Households", value: Math.max(0, totalHh - farmingCount), percentage: totalHh ? shareOf(totalHh - farmingCount, totalHh) : null, percentageLabel: "Non-farming households ÷ total households" },
-        { label: "Farming-Household Population", value: farmingPop, percentage: totalPop ? shareOf(farmingPop, totalPop) : null, percentageLabel: "Persons in farming households ÷ total population" },
-        { label: "Non-Farming-Household Population", value: Math.max(0, totalPop - farmingPop), percentage: totalPop ? shareOf(totalPop - farmingPop, totalPop) : null, percentageLabel: "Persons in non-farming households ÷ total population" },
-        { label: "Total Households", value: totalHh },
-        { label: "Total Population", value: totalPop },
-        { label: "No. of Barangay", value: barangays.length },
-      ];
+      const selectedKeys = new Set(selectedHouseholds.map((h) => hhKeySafe(h)));
+      const householdRows = selectedHouseholds.map((h) => {
+        const key = hhKeySafe(h);
+        const info = householdInfo.get(key);
+        const members = personByHousehold.get(key) || [];
+        const head = info?.head || members.find(isHead) || null;
+        const classification = classifyHousehold(h, sectorFlags);
+        return {
+          ...h,
+          _full_name: head ? getPersonFullName(head) : "Not Stated",
+          _household_head: head ? getPersonFullName(head) : "Not Stated",
+          _household_income: info?.income ?? null,
+          _household_type: classification.mixed ? "Mixed farming + fisherfolk" : targetFarming ? "Farming household" : "Fisherfolk household",
+          _other_sector: targetFarming ? (classification.fisherfolk ? "Also fisherfolk" : "No fisherfolk flag") : (classification.farmer ? "Also farming" : "No farmer flag"),
+          _member_count: Number.isFinite(Number(h?.hh_size)) ? Number(h?.hh_size) : members.length,
+          _linked_person_records: members.length,
+          _member_count_check: Number.isFinite(Number(h?.hh_size)) && members.length ? (Number(h?.hh_size) === members.length ? "MATCH" : `CHECK: HH size ${Number(h?.hh_size)} vs ${members.length} linked persons`) : "NOT CHECKED",
+        };
+      });
+      for (const row of householdRows) add(row.area_name || "Not Stated", row);
+
       for (const b of barangays) {
-        const hs = allHouseholds.filter((h) => (h.area_name || "Not Stated") === b);
-        const f = hs.filter((h) => householdInfo.get(hhKeySafe(h))?.farming).length;
-        const ps = peopleRows.filter((p) => (p.area_name || "Not Stated") === b);
-        const fp = ps.filter((p) => p.livelihood === "Farming Household").length;
-        byBarangaySummary.push({ barangay: b, farming_households: f, non_farming_households: hs.length - f, total_households: hs.length, farming_population: fp, non_farming_population: ps.length - fp, total_population: ps.length, population_rate: ps.length ? `${(fp / ps.length * 100).toFixed(2)}%` : "0.00%" });
+        const bh = selectedHouseholds.filter((h) => (h.area_name || "Not Stated") === b);
+        const bp = persons.filter((person) => (person.area_name || "Not Stated") === b && selectedKeys.has(householdKey(person))).length;
+        const mixed = bh.filter((h) => householdInfo.get(hhKeySafe(h)) && classifyHousehold(h, sectorFlags).mixed).length;
+        byBarangaySummary.push({
+          barangay: b,
+          households: bh.length,
+          household_heads: bh.map((h) => {
+            const info = householdInfo.get(hhKeySafe(h));
+            const members = personByHousehold.get(hhKeySafe(h)) || [];
+            const head = info?.head || members.find(isHead) || null;
+            return head ? getPersonFullName(head) : "Not Stated";
+          }).join("; "),
+          population_in_selected_households: bp,
+          mixed_households: mixed,
+          household_share: (() => {
+            const barangayTotal = allHouseholds.filter((h) => (h.area_name || "Not Stated") === b).length;
+            const pct = shareOf(bh.length, barangayTotal);
+            return pct == null ? "N/A" : `${pct.toFixed(2)}%`;
+          })(),
+        });
       }
+
+      const selectedPopulation = persons.filter((person) => selectedKeys.has(householdKey(person))).length;
+      const sourceMemberCount = selectedHouseholds.reduce((sum, h) => {
+        const n = Number(h?.hh_size);
+        return sum + (Number.isFinite(n) ? n : 0);
+      }, 0);
+      const memberReconciliationIssues = selectedHouseholds.filter((h) => {
+        const n = Number(h?.hh_size);
+        const linked = personByHousehold.get(hhKeySafe(h))?.length || 0;
+        return Number.isFinite(n) && linked > 0 && n !== linked;
+      }).length;
+      const totalHh = allHouseholds.length;
+      const share = totalHh ? shareOf(selectedHouseholds.length, totalHh) : null;
+      const label = targetFarming ? "Farming" : "Fisherfolk";
       return {
-        groups, summary, byBarangaySummary,
-        columns: [
-          { key: "_full_name", label: "Full Name" },
-          { key: "a03_sex", label: "Sex" },
-          { key: "a05_age", label: "Age" },
-          { key: "livelihood", label: "Household Livelihood" },
-          { key: "_household_head", label: "Household Head" },
+        groups,
+        summary: [
+          { label: `${label} Households`, value: selectedHouseholds.length, percentage: share, percentageLabel: `${label} households ÷ total households` },
+          { label: `Population in ${label} Households`, value: selectedPopulation, percentage: persons.length ? shareOf(selectedPopulation, persons.length) : null, percentageLabel: `Linked unique persons in ${label.toLowerCase()} households ÷ total unique persons` },
+          { label: `Household Size Total (source)`, value: sourceMemberCount, detail: "Sum of the source household hh_size field for selected households" },
+          { label: `Linked Person Records`, value: selectedPopulation, detail: "Unique person records linked to selected household keys" },
+          { label: "Household/member reconciliation issues", value: memberReconciliationIssues, detail: "Selected households where source hh_size differs from linked person records" },
+          { label: `Mixed ${label.toLowerCase()} + other sector`, value: selectedHouseholds.filter((h) => classifyHousehold(h, sectorFlags).mixed).length },
+          { label: "Total Households", value: totalHh },
+          { label: "Total Population", value: persons.length },
+          { label: "No. of Barangay", value: barangays.length },
         ],
-        title: `Farming & Non-Farming Households by Barangay — CBMS ${year}`,
-        subtitle: "Households are classified as farming when at least one household member has a normalized farmer/agricultural occupation or industry indicator.",
-        note: `Method: Farming household = household with at least one member classified as agricultural/farming. Non-farming = all other households. Source: Authorized CBMS Data Custodian · CBMS ${year} dataset · Selected local area`,
+        byBarangaySummary,
+        columns: [
+          { key: "_household_head", label: "Household Head" },
+          { key: "area_name", label: "Barangay" },
+          { key: "address_sitio_purok", label: "Purok / Sitio" },
+          { key: "husn", label: "HUSN" },
+          { key: "hsn", label: "HSN" },
+          { key: "_member_count", label: "Household Size (source)" },
+          { key: "_linked_person_records", label: "Linked Person Records" },
+          { key: "_member_count_check", label: "Member Reconciliation" },
+          { key: "_household_type", label: "Sector Classification" },
+          { key: "_other_sector", label: "Other Sector Flag" },
+          { key: "_household_income", label: "Reported Family Income" },
+        ],
+        title: `${label} Households by Barangay — Household Heads · CBMS ${year}`,
+        subtitle: `One row per unique ${label.toLowerCase()} household. Household Head is displayed to make the household count auditable; person-level farmer/fisherfolk counts are reported separately.`,
+        note: `Method: ${label} household = unique household with at least one person carrying the source ${targetFarming ? "farmer/agricultural" : "fisherfolk"} sector indicator. Household-share % = selected households ÷ all households × 100. Population in selected households is counted from unique persons linked to those household keys; source hh_size is shown separately as an audit field and is not substituted silently when person records are missing. Source: Authorized CBMS Data Custodian · CBMS ${year} dataset`,
       };
     }
 
     if (mode === "farming_reported_income") {
-      const farmingHouseholds = ds.households.filter((h) => householdInfo.get(hhKeySafe(h))?.farming);
+      const farmingHouseholds = households.filter((h) => householdInfo.get(hhKeySafe(h))?.farming);
       const reportedHouseholds = farmingHouseholds.filter((h) => householdInfo.get(hhKeySafe(h))?.income !== null);
       const reportedKeys = new Set(reportedHouseholds.map((h) => hhKeySafe(h)));
-      const farmerRows = ds.persons
-        .filter((p) => reportedKeys.has(householdKey(p)) && isAgriculturalWork(p))
+      const farmerRows = persons
+        .filter((p) => reportedKeys.has(householdKey(p)) && isFarmerPerson(p))
         .map((p) => {
           const key = householdKey(p);
           const info = householdInfo.get(key);
@@ -1784,12 +2053,12 @@ function AgricultureByBarangay({ mode, onSelect }: { mode: AgricultureMode; onSe
         ],
         title: `Farming Households with Reported Income by Barangay — CBMS ${year}`,
         subtitle: "Barangay-sorted roster of agricultural/farming persons whose household has a numeric reported H06 Total Family Income. Income is a household amount and is not treated as the individual person's salary.",
-        note: `Method: Reported-income farming household = household classified as farming with a numeric H06 Total Family Income. Reported-income rate = reported-income farming households ÷ all farming households × 100. Detailed rows list agricultural/farming household members; the reported family income belongs to the household and may therefore repeat for multiple members of the same household. Farmer / agricultural activity is derived from CBMS farmer, occupation, industry, and preserved agricultural-engagement fields. Source: Authorized CBMS Data Custodian · CBMS ${year} dataset · Selected local area`,
+        note: `Method: Reported-income farming household = household classified as farming with a numeric H06 Total Family Income. Reported-income rate = reported-income farming households ÷ all farming households × 100. Detailed rows list agricultural/farming household members; the reported family income belongs to the household and may therefore repeat for multiple members of the same household. Farmer / agricultural activity is based on CBMS sector-specific farmer/agricultural-engagement fields; occupation and industry are displayed as audit details only. Source: Authorized CBMS Data Custodian · CBMS ${year} dataset · Selected local area`,
       };
     }
 
     if (mode === "farming_poverty" || mode === "agri_income") {
-      const farmingHouseholds = ds.households.filter((h) => householdInfo.get(hhKeySafe(h))?.farming);
+      const farmingHouseholds = households.filter((h) => householdInfo.get(hhKeySafe(h))?.farming);
       const reported = farmingHouseholds.filter((h) => householdInfo.get(hhKeySafe(h))?.income !== null);
       const lowIncome = reported.filter((h) => (householdInfo.get(hhKeySafe(h))!.income as number) < 20000);
       for (const h of farmingHouseholds) {
@@ -1864,14 +2133,14 @@ function AgricultureByBarangay({ mode, onSelect }: { mode: AgricultureMode; onSe
       };
     }
 
-    const employed = ds.persons.filter((p) => ageOf(p) !== null && (ageOf(p) as number) >= 15 && isEmployed(p));
+    const employed = persons.filter((p) => ageOf(p) !== null && (ageOf(p) as number) >= 15 && isEmployed(p));
     let agri = 0, nonAgri = 0, notStated = 0;
     for (const p of employed) {
       const category = isAgriculturalWork(p) ? "Agricultural Job" : ((p.e05_occupation_group || p.e06_industry_group || p.legacy_occupation_text || p.legacy_industry_text) ? "Non-Agricultural Job" : "Not Stated");
       if (category === "Agricultural Job") agri++; else if (category === "Non-Agricultural Job") nonAgri++; else notStated++;
       add(p.area_name || "Not Stated", { ...p, _full_name: getPersonFullName(p) || "Not Stated", job_type: category, occupation: p.e05_occupation_group || p.legacy_occupation_text || "Not Stated", industry: p.e06_industry_group || p.legacy_industry_text || "Not Stated" });
     }
-    const labor = ds.persons.filter((p) => ageOf(p) !== null && (ageOf(p) as number) >= 15 && low(p.e01_labor_force_participation).includes("labor force")).length || employed.length;
+    const labor = persons.filter((p) => ageOf(p) !== null && (ageOf(p) as number) >= 15 && low(p.e01_labor_force_participation).includes("labor force")).length || employed.length;
     for (const b of barangays) {
       const list = groups.get(b) || [];
       const aa = list.filter((r) => r.job_type === "Agricultural Job").length;
@@ -1893,10 +2162,10 @@ function AgricultureByBarangay({ mode, onSelect }: { mode: AgricultureMode; onSe
         { key: "job_type", label: "Job Type" }, { key: "occupation", label: "Occupation" }, { key: "industry", label: "Industry" },
       ],
       title: `Agricultural vs Non-Agricultural Employment by Barangay — CBMS ${year}`,
-      subtitle: "Persons aged 15+ classified from employment status, occupation, and industry fields. Agricultural jobs are identified from normalized farmer/agricultural indicators and agriculture-related occupation/industry text.",
-      note: `Method: Agricultural job classification uses normalized e17_farmer plus agriculture-related occupation/industry terms; agricultural employment rate = agricultural employed ÷ labor-force population aged 15+ × 100. Source: Authorized CBMS Data Custodian · CBMS ${year} dataset · Selected local area`,
+      subtitle: "Person-level employment roster. Agricultural/fishery classification follows the centralized CBMS sector rules; occupation and industry are retained as audit fields and for non-agricultural grouping.",
+      note: `Method: Agricultural/fishery employed persons use the centralized CBMS farmer/fisherfolk classification. The displayed agriculture/fishery share is agricultural/fishery employed persons ÷ all employed persons × 100. Source: Authorized CBMS Data Custodian · CBMS ${year} dataset · Selected local area`,
     };
-  }, [mode, year, ds.persons, ds.households, barangays, householdInfo, personByHousehold]);
+  }, [mode, year, persons, households, barangays, householdInfo, personByHousehold, sectorFlags]);
 
   const sortedBarangays = useMemo(() => Array.from(model.groups.keys()).sort(sortNamesAZ), [model.groups]);
   const detailGroups = useMemo(() => {
@@ -2316,7 +2585,7 @@ function hhKeySafe(h: any) {
 // ── Generic livelihood / education views by barangay ───────────────────────
 function GenericByBarangay({ def, onSelect }: { def: GenericDef; onSelect: (p: any) => void }) {
   const result = useMemo(() => {
-    const all = getEnrichedPersons();
+    const all = uniquePersonRecords(getEnrichedPersons());
     const groups = new Map<string, any[]>();
     const totals = new Map<string, number>();
 
