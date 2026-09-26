@@ -29,6 +29,8 @@ git push origin main
 git tag v1.4.17
 git push origin v1.4.17
 ```
+git tag -d v1.4.17 - delete a tag
+
 
 ## Expected GitHub assets
 
