@@ -1,6 +1,6 @@
 # CBMS Insights — CBMS Automated Data Conversion & Management System
 
-**Current source baseline: v1.4.16**
+**Current source baseline: v1.4.17**
 
 **Authorized CBMS Data Custodian · Selected local area**
 
