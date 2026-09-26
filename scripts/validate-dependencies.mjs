@@ -5,7 +5,7 @@ const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
 const lockPackages = lock.packages ?? {};
 const failures = [];
 
-if (pkg.version !== "1.4.16") {
+if (pkg.version !== "1.4.17") {
   failures.push(`Expected stable release version 1.4.16, found ${pkg.version}.`);
 }
 if (lock.version !== pkg.version || lockPackages[""]?.version !== pkg.version) {
